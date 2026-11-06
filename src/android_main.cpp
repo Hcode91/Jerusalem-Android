@@ -3,6 +3,7 @@
 #include "jerusalem/aqc_animation.hpp"
 #include "jerusalem/navigation.hpp"
 #include "jerusalem/scene_audio.hpp"
+#include "jerusalem/interactions.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -25,6 +26,7 @@ std::mutex bridge_mutex;
 std::string pending_path;
 std::string diagnostic="Native inspector starting. No game scene has been decoded.";
 unsigned commands=0;
+std::string inventory_report="Start A01 navigation to inspect the pickup inventory.";
 
 void report(const std::string& text) {
   { std::lock_guard<std::mutex> guard(bridge_mutex); diagnostic=text; }
@@ -217,7 +219,7 @@ class Renderer {
   std::optional<jerusalem::Camera> saved_camera_;
   bool saved_camera_mode_=false;
   Uint64 animation_tick_=0;
-  std::vector<jerusalem::Exit> exits_;
+  std::vector<jerusalem::Exit> exits_,items_;
   int width_=0,height_=0;
   float zoom_=1,pan_x_=0,pan_y_=0;
   std::string preview_;
@@ -234,7 +236,7 @@ class Renderer {
     if (camera_texture_) SDL_DestroyTexture(camera_texture_);
     texture_=camera_texture_=nullptr; panorama_={}; camera_mode_=false;
     animation_.reset(); animation_error_.clear(); saved_camera_.reset();
-    exits_.clear();
+    exits_.clear(); items_.clear();
     camera_width_=camera_height_=0;
   }
   void fit() { zoom_=1; pan_x_=pan_y_=0; camera_={}; camera_dirty_=true; }
@@ -258,6 +260,7 @@ class Renderer {
     animation_tick_=SDL_GetTicks();
   }
   void reset_animation_clock() { animation_tick_=SDL_GetTicks(); }
+  void items(std::vector<jerusalem::Exit> items) { items_=std::move(items); }
   jerusalem::Camera camera() const { return camera_; }
   void set_camera(jerusalem::Camera camera) { camera_=camera; camera_dirty_=true; }
   void exits(std::vector<jerusalem::Exit> exits) { exits_=std::move(exits); }
@@ -337,14 +340,15 @@ class Renderer {
         }
         SDL_FRect dst{0,64,float(w),float(h-220)};
         SDL_RenderTexture(renderer_,camera_texture_,nullptr,&dst);
-        for (const auto& exit:exits_) if (exit.enabled) {
+        for (const auto* group:{&exits_,&items_}) for (const auto& exit:*group) if (exit.enabled) {
+          const bool item=group==&items_;
           const auto point=jerusalem::hotspot_screen(geometry_,camera_,(exit.left+exit.right)/2.0,
                                                     (exit.top+exit.bottom)/2.0,rw,rh);
           if (!point) continue;
           const float x=float((point->x+1)*w/2),y=64+float((point->y+1)*(h-220)/2);
-          SDL_SetRenderDrawColor(renderer_,exit.puzzle?240:90,exit.puzzle?160:230,100,255);
+          SDL_SetRenderDrawColor(renderer_,item?90:exit.puzzle?240:90,item?200:exit.puzzle?160:230,item?255:100,255);
           SDL_FRect mark{x-14,y-14,28,28}; SDL_RenderRect(renderer_,&mark);
-          SDL_RenderDebugText(renderer_,x+18,y-4,exit.puzzle?"PUZZLE":"EXIT");
+          SDL_RenderDebugText(renderer_,x+18,y-4,item?"ITEM":exit.puzzle?"PUZZLE":"EXIT");
         }
       } else {
         const float scale=std::min(float(w)/float(width_),float(h-220)/float(height_))*zoom_;
@@ -376,15 +380,30 @@ class InspectionScene {
   Audio& audio_;
   SceneAmbience ambience_;
   std::optional<jerusalem::SceneGraph> navigation_;
+  std::unique_ptr<jerusalem::InteractionState> interactions_;
   std::map<std::uint32_t,std::filesystem::path> assets_;
   std::optional<std::uint32_t> node_;
   std::string selected_asset_;
-  void enter(std::uint32_t id,jerusalem::Camera camera) {
+  void publish_inventory(const jerusalem::InteractionState* state=nullptr) {
+    if (!state) state=interactions_.get();
+    std::ostringstream out;
+    if (!navigation_ || !state) out << "Start A01 navigation to view the pickup inventory.";
+    else if(navigation_->items.empty()) out << "Pickup support needs refreshed connections: long-press A01 navigation and select the original executable again.";
+    else {
+      out << "Collected items: " << state->inventory().size() << '\n';
+      for (const auto id:state->inventory()) out << "- " << jerusalem::collectible(*navigation_,id).name << " [" << id << "]\n";
+      out << "\nItem use and combinations are not available yet. This inventory resets when you leave navigation or reload connections; saving is not available.";
+    }
+    std::lock_guard<std::mutex> guard(bridge_mutex);inventory_report=out.str();
+  }
+  void enter(std::uint32_t id,jerusalem::Camera camera,const jerusalem::InteractionState* next=nullptr) {
     const auto& node=jerusalem::scene_node(*navigation_,id);
     const auto path=checked_path(assets_.at(id).string());
     auto data=jerusalem::read_file(path); const jerusalem::Bytes bytes(data);
     auto image=jerusalem::decode_aqc(bytes);
     const auto geometry=jerusalem::panorama_geometry(bytes);
+    const auto* state=next?next:interactions_.get();
+    if (state && !navigation_->items.empty()) image=jerusalem::compose_items(jerusalem::AqcAnimation(data),image,state->visibility(id));
     if (jerusalem::parse_aqc_channels(bytes).size()!=node.channels)
       throw jerusalem::ParseError("scene channel count differs from original setup: "+node.asset);
     audio_.stop(); renderer_.panorama(std::move(image),geometry);
@@ -392,7 +411,11 @@ class InspectionScene {
     std::vector<jerusalem::Exit> exits;
     for (const auto& exit:navigation_->exits) if (exit.source==id) exits.push_back(exit);
     renderer_.exits(std::move(exits)); node_=id; selected_asset_=node.asset;
-    report("A01 traversal: "+node.asset+". Drag to look; tap EXIT markers. Puzzle/dialogue/story events are not implemented. A01 navigation exits this mode.");
+    std::vector<jerusalem::Exit> markers;
+    if(state) for(const auto& item:navigation_->items) if(item.node==id && !state->collected(item.id))
+      markers.push_back({id,0,item.id,false,true,item.left,item.top,item.right,item.bottom,item.cursor,item.event,{}});
+    renderer_.items(std::move(markers)); publish_inventory(state);
+    report("A01 traversal: "+node.asset+". Drag to look; tap EXIT or ITEM markers. Puzzle/dialogue/story events are not implemented. A01 navigation exits this mode.");
     std::vector<jerusalem::SceneAmbient> bindings;
     for (const auto& binding:navigation_->ambient) if (binding.node==id) bindings.push_back(binding);
     try {
@@ -403,7 +426,7 @@ class InspectionScene {
  public:
   InspectionScene(Renderer& r,Audio& a):renderer_(r),audio_(a) {}
   void open(const std::string& requested) {
-    node_.reset(); navigation_.reset(); assets_.clear(); ambience_.stop();
+    node_.reset(); interactions_.reset(); navigation_.reset(); assets_.clear(); ambience_.stop(); publish_inventory();
     audio_.stop(); renderer_.clear_image(); renderer_.preview("");
     try {
       const auto path=checked_path(requested);
@@ -432,7 +455,7 @@ class InspectionScene {
   void stop_audio() { ambience_.stop(); }
   void toggle_navigation(bool reload=false) {
     if (node_ && !reload) {
-      node_.reset(); navigation_.reset(); assets_.clear(); renderer_.exits({}); ambience_.stop();
+      node_.reset(); interactions_.reset(); navigation_.reset(); assets_.clear(); renderer_.exits({}); renderer_.items({}); ambience_.stop(); publish_inventory();
       report("A01 traversal off. Asset inspection controls remain available."); return;
     }
     try {
@@ -443,10 +466,21 @@ class InspectionScene {
       auto id=graph.nodes.front().id;
       auto camera=jerusalem::Camera{};
       for (const auto& n:graph.nodes) if (n.asset==selected_asset_) { id=n.id; camera=renderer_.camera(); }
+      // The executable supplies fallback labels; optional AOBJ.INI supplies English UI labels.
+      for(const auto& file:std::filesystem::directory_iterator(root)) {
+        auto name=file.path().filename().string();for(auto& c:name) if(c>='a'&&c<='z') c=char(c-'a'+'A');
+        if(name!="AOBJ.INI" || !file.is_regular_file() || file.is_symlink()) continue;
+        try {
+          const auto data=jerusalem::read_file(file.path());const auto labels=jerusalem::parse_localized(std::string(data.begin(),data.end()));
+          for(auto& item:graph.items) for(const auto& label:labels) if(label.key==std::to_string(item.id) && label.language=="ENG" && !label.title.empty() && label.title.size()<96 &&
+              std::all_of(label.title.begin(),label.title.end(),[](unsigned char c){return c>=32 && c<=126;})) {item.name=label.title;break;}
+        } catch(const std::exception& e) {__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Item labels unavailable: %s",e.what());}
+      }
       navigation_=std::move(graph); assets_=std::move(assets);
+      interactions_=std::make_unique<jerusalem::InteractionState>(*navigation_);
       enter(id,camera);
     } catch (const std::exception& e) {
-      navigation_.reset(); assets_.clear(); node_.reset(); renderer_.exits({}); ambience_.stop();
+      interactions_.reset(); navigation_.reset(); assets_.clear(); node_.reset(); renderer_.exits({}); renderer_.items({}); ambience_.stop(); publish_inventory();
       report(std::string("A01 traversal unavailable: ")+e.what());
     }
   }
@@ -455,8 +489,18 @@ class InspectionScene {
     try {
       const auto point=renderer_.hit(x,y);
       if (!point) return;
+      if(interactions_) if(const auto item=interactions_->hit(*node_,point->x,point->y)) {
+        auto next=std::make_unique<jerusalem::InteractionState>(*interactions_);
+        if(next->pickup(*item)) {
+          enter(*node_,renderer_.camera(),next.get());interactions_=std::move(next);
+          const auto& object=jerusalem::collectible(*navigation_,*item);
+          report("Collected: "+object.name+" ["+std::to_string(*item)+"]. Open Inventory to view it.");
+          __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Pickup state: item=%u counter=%u value=%u inventory=%zu",*item,object.counter,unsigned(interactions_->variable(object.counter)),interactions_->inventory().size());
+        }
+        return;
+      }
       const auto hit=jerusalem::navigation_hit(*navigation_,*node_,point->x,point->y);
-      if (!hit) { report("No enabled exit at this point. Look for EXIT or PUZZLE markers."); return; }
+      if (!hit) { report("No enabled exit at this point. Look for EXIT, ITEM or PUZZLE markers."); return; }
       const auto exit=navigation_->exits[*hit];
       if (exit.puzzle) { report("This hotspot opens an original puzzle. Puzzle interactions are not implemented; no route has been bypassed."); return; }
       enter(exit.target,exit.arrival);
@@ -537,6 +581,10 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeCommand(JNIEnv*,jclass,jint command) {
   if (command<1 || command>8) return;
   std::lock_guard<std::mutex> guard(bridge_mutex); commands|=1U<<command;
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeInventory(JNIEnv* env,jclass) {
+  std::lock_guard<std::mutex> guard(bridge_mutex);return env->NewStringUTF(inventory_report.c_str());
 }
 extern "C" JNIEXPORT jstring JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeStatus(JNIEnv* env,jclass) {

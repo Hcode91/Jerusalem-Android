@@ -1,6 +1,7 @@
 #include "jerusalem/panorama.hpp"
 #include "jerusalem/aqc_animation.hpp"
 #include "jerusalem/navigation.hpp"
+#include "jerusalem/interactions.hpp"
 #include <SDL.h>
 #include <utility>
 #include <cmath>
@@ -57,10 +58,10 @@ int main(int argc,char** argv) {
       } else if (saved_camera) { camera=*saved_camera; saved_camera.reset(); }
       preview_tick=SDL_GetTicks(); dirty=true;
     };
-    if (start_preview) cycle_preview();
     unsigned long frames=0;
     int texture_width=0,texture_height=0;
     std::optional<jerusalem::SceneGraph> navigation;
+    std::unique_ptr<jerusalem::InteractionState> interactions;
     std::map<std::uint32_t,std::filesystem::path> scene_assets;
     std::uint32_t current=0;
     if (navigation_file) {
@@ -71,30 +72,49 @@ int main(int argc,char** argv) {
       for (auto& c:stem) if (c>='a'&&c<='z') c=char(c-'a'+'A');
       for (const auto& node:navigation->nodes) if (node.asset==stem) current=node.id;
       if (!current) throw jerusalem::ParseError("initial AQC is not in the supplied navigation model");
+      interactions=std::make_unique<jerusalem::InteractionState>(*navigation);
+      if(!navigation->items.empty()) {
+        const auto input=jerusalem::read_file(argv[1]);
+        source=jerusalem::compose_items(jerusalem::AqcAnimation(input),source,interactions->visibility(current));
+        preview=std::make_unique<jerusalem::AqcPreview>(input,source);
+        std::cout << "Pickup preview ready; cyan markers collect supported items; I lists inventory; no item use or saves\n";
+      }
       std::cout << "A01 traversal preview ready; story and puzzle actions are not implemented\n";
     }
+    if(start_preview)cycle_preview();
     bool mouse_moved=false; int mouse_start_x=0,mouse_start_y=0;
     const auto tap=[&](float x,float y,int width,int height) {
       if (!navigation || width<=0 || height<=0) return;
       camera=jerusalem::constrain_camera(geometry,camera,width,height);
       const auto point=jerusalem::hotspot_point(geometry,jerusalem::panorama_point(geometry,camera,2*x/width-1,2*y/height-1,width,height));
-      const auto match=jerusalem::navigation_hit(*navigation,current,point.x,point.y);
-      if (!match) return;
-      const auto exit=navigation->exits[*match];
-      if (exit.puzzle) { std::cout << "Original puzzle action is not implemented; no route bypassed\n"; return; }
+      std::unique_ptr<jerusalem::InteractionState> next;
+      const auto item=interactions->hit(current,point.x,point.y);
+      auto target=current;auto arrival=camera;
+      if(item) {next=std::make_unique<jerusalem::InteractionState>(*interactions);next->pickup(*item);}
+      else {
+        const auto match=jerusalem::navigation_hit(*navigation,current,point.x,point.y);
+        if(!match)return;
+        const auto& exit=navigation->exits[*match];
+        if(exit.puzzle){std::cout << "Original puzzle action is not implemented; no route bypassed\n";return;}
+        target=exit.target;arrival=exit.arrival;
+      }
       try {
-        auto bytes=jerusalem::read_file(scene_assets.at(exit.target));
+        auto bytes=jerusalem::read_file(scene_assets.at(target));
         auto image=jerusalem::decode_aqc(jerusalem::Bytes(bytes));
         const auto next_geometry=jerusalem::panorama_geometry(jerusalem::Bytes(bytes));
-        if (jerusalem::parse_aqc_channels(jerusalem::Bytes(bytes)).size()!=jerusalem::scene_node(*navigation,exit.target).channels)
+        if(jerusalem::parse_aqc_channels(jerusalem::Bytes(bytes)).size()!=jerusalem::scene_node(*navigation,target).channels)
           throw jerusalem::ParseError("scene channel count differs from original setup");
+        if(!navigation->items.empty()) image=jerusalem::compose_items(jerusalem::AqcAnimation(bytes),image,(next?next:interactions)->visibility(target));
         auto next_preview=std::make_unique<jerusalem::AqcPreview>(std::move(bytes),image);
-        source=std::move(image); geometry=next_geometry; preview=std::move(next_preview);
-        current=exit.target; camera=exit.arrival; saved_camera.reset(); preview_tick=SDL_GetTicks(); dirty=true;
-        const auto title=jerusalem::scene_node(*navigation,current).asset+" / traversal preview; puzzles unavailable";
+        source=std::move(image);geometry=next_geometry;preview=std::move(next_preview);
+        if(next)interactions=std::move(next);
+        current=target;camera=arrival;saved_camera.reset();preview_tick=SDL_GetTicks();dirty=true;
+        const auto title=jerusalem::scene_node(*navigation,current).asset+" / pickup preview; I lists inventory";
         SDL_SetWindowTitle(window.get(),title.c_str());
-        std::cout << "A01 traversal: " << jerusalem::scene_node(*navigation,current).asset << '\n';
-      } catch (const std::exception& e) { std::cerr << "Cannot enter scene: " << e.what() << '\n'; }
+        if(item)std::cout << "Collected: " << jerusalem::collectible(*navigation,*item).name << " [" << *item << "]\n";
+        else std::cout << "A01 traversal: " << jerusalem::scene_node(*navigation,current).asset << '\n';
+      }catch(const std::exception& e){std::cerr << "Cannot enter scene: " << e.what() << '\n';}
+
     };
     while (running) {
       int width,height;
@@ -106,6 +126,11 @@ int main(int argc,char** argv) {
           if (event.key.keysym.sym==SDLK_ESCAPE) running=false;
           if (event.key.keysym.sym==SDLK_HOME) { camera={}; dirty=true; }
           if (event.key.keysym.sym==SDLK_a) cycle_preview();
+          if(event.key.keysym.sym==SDLK_i && interactions) {
+            std::cout << "Collected items: " << interactions->inventory().size() << '\n';
+            for(const auto id:interactions->inventory()) std::cout << id << ' ' << jerusalem::collectible(*navigation,id).name << '\n';
+            std::cout << "Item use/combinations and saving are not implemented\n";
+          }
         } else if (event.type==SDL_WINDOWEVENT && (event.window.event==SDL_WINDOWEVENT_FOCUS_LOST || event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED)) {
           foreground=event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED;
           preview_tick=SDL_GetTicks();
@@ -150,6 +175,12 @@ int main(int argc,char** argv) {
           SDL_SetRenderDrawColor(renderer.get(),exit.puzzle?240:90,exit.puzzle?160:230,100,255);
           SDL_Rect marker{int((point->x+1)*width/2)-14,int((point->y+1)*height/2)-14,28,28};
           SDL_RenderDrawRect(renderer.get(),&marker);
+        }
+        if(navigation && interactions) for(const auto& item:navigation->items) if(item.node==current && !interactions->collected(item.id)) {
+          const auto point=jerusalem::hotspot_screen(geometry,camera,(item.left+item.right)/2.0,(item.top+item.bottom)/2.0,rw,rh);
+          if(!point)continue;
+          SDL_SetRenderDrawColor(renderer.get(),90,200,255,255);
+          SDL_Rect marker{int((point->x+1)*width/2)-14,int((point->y+1)*height/2)-14,28,28};SDL_RenderDrawRect(renderer.get(),&marker);
         }
         SDL_RenderPresent(renderer.get());
         if (limit && ++frames>=*limit) running=false;

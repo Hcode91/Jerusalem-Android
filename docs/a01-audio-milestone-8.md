@@ -71,3 +71,5 @@ Actions run [42234532804](https://github.com/Hcode91/Jerusalem-Android/actions/r
 Audio lifecycle handling now runs in an SDL event watch at enqueue time. The watch pauses both audio paths and the ambient refill worker, records background state atomically and resumes on foreground entry. It is removed before its referenced resources are destroyed. One-shot stream operations now share a mutex because event watches may run on another thread; the scene-audio path already had that protection. Renderer and gesture state continue to update on the main loop. The emulator pause/resume assertion is retained unchanged. The workflow summary now distinguishes APK compilation, ARM64 packaging and emulator validation.
 
 The correction still needs a new Actions/emulator result; no local APK build or physical-speaker success is claimed.
+
+Subsequent device result: the user confirmed the corrected build, including scene audio and background/resume. [Milestone 9](a01-pickups-milestone-9.md) adds a separately tested pickup preview.

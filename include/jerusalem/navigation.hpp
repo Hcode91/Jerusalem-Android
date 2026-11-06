@@ -15,7 +15,15 @@ struct Exit {
   Camera arrival;
 };
 struct SceneAmbient { std::uint32_t node,sound,volume; std::string stem; };
-struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; };
+struct ItemChannel { std::uint32_t node,channel; };
+struct Collectible {
+  std::uint32_t id,node;
+  std::int32_t left,top,right,bottom;
+  std::uint32_t cursor,event,counter,milestone;
+  std::string name;
+  std::vector<ItemChannel> channels;
+};
+struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; std::vector<Collectible> items; };
 SceneGraph extract_a01_navigation(Bytes executable);
 std::string write_navigation(const SceneGraph& graph);
 SceneGraph parse_navigation(const std::string& text);
