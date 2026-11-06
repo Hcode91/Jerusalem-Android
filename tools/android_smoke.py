@@ -75,6 +75,35 @@ def click(text):
     wait_for(locate, f'UI control not found: {text}')
 
 
+def click_list_item(text):
+    """Find a browser row using swipes confined to its vertical list viewport."""
+    for direction in (1, -1):
+        previous = None
+        for _ in range(16):
+            xml = current_ui()
+            center = control_center(xml, text)
+            if center is not None:
+                adb('shell', 'input', 'tap', str(center[0]), str(center[1]))
+                return
+            if xml == previous:
+                break
+            previous = xml
+            for node in ET.fromstring(xml).iter('node'):
+                if node.get('class') != 'android.widget.ListView' or node.get('scrollable') != 'true':
+                    continue
+                bounds = list(map(int, re.findall(r'-?\d+', node.get('bounds', ''))))
+                if len(bounds) == 4:
+                    x1, y1, x2, y2 = bounds
+                    if 0 <= x1 < x2 and 0 <= y1 and y2-y1 > 40:
+                        start, end = (y2-20, y1+20) if direction == 1 else (y1+20, y2-20)
+                        adb('shell', 'input', 'swipe', str((x1+x2)//2), str(start),
+                            str((x1+x2)//2), str(end), '350')
+                        break
+            else:
+                raise RuntimeError(f'No scrollable asset list while locating {text}')
+    raise RuntimeError(f'Asset list item not found: {text}')
+
+
 def click_scrolling(text):
     # Search both ways: opening Inventory can leave earlier controls offscreen.
     for direction in (1, -1):
@@ -509,7 +538,7 @@ def main():
         click_scrolling('A01 navigation')
         # Movie playback has no report dialog and uses header timing plus stereo PCM.
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-movie.CI2'", input=synthetic_cinema(100))
-        adb('logcat', '-c'); click_scrolling('Browse assets'); click('synthetic-movie.CI2')
+        adb('logcat', '-c'); click_scrolling('Browse assets'); click_list_item('synthetic-movie.CI2')
         wait_for(lambda: b'Cinema frame: index=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native cinema preview did not advance')
         wait_for(lambda: b'Cinema preview decoded 100 frames.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Cinema did not reach EOF at its declared frame count')
         wait_for(lambda: b'Audio buffer drained: synthetic-movie.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Movie PCM did not reach SDL output')
