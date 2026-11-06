@@ -45,3 +45,7 @@ After installing the new APK:
 5. **Save checkpoint**, close/reopen the app, **Load checkpoint**, and check the inventory again.
 
 Next: independently model the palm's different pickup effects and conditional presentations, then trace supported object-use/character transitions. Dialogue/movie dependencies must be implemented before claiming story progression.
+
+## First Actions result and harness correction
+
+Run [42254369140](https://github.com/Hcode91/Jerusalem-Android/actions/runs/42254369140) passed all host tests, ARM64 compilation/packaging and Android lint, and uploaded the APK. The emulator smoke test reached the V4-session setup, then failed because it expected SYNTH_A after toggling navigation off/on. Captured app logs instead show navigation correctly reopening SYNTH_B, the asset restored by the preceding checkpoint. The harness now explicitly waits for the old session to stop, expects the retained SYNTH_B selection and collects the two ingredients without an extra exit tap. Combination/device validation remains pending the corrected Actions run; no checks are skipped or relaxed.
