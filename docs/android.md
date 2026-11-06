@@ -12,7 +12,9 @@ Build failures are fatal. Test reports and available Android logs/lint reports a
 
 No APK or Android native builds have been run locally. The workflow target is `Hcode91/Jerusalem-Android`; see the validation status in the README and pull request for observed CI results.
 
-The pinned SDL Java glue receives two narrow lint annotations from `patches/sdl-android-lint.patch`. Its API31 haptic implementation is instantiated only under an existing SDK>=31 check (SDLControllerManager lines 52–59); the class annotation makes that guarantee visible to lint. Its USB receiver registration already selects explicit flags at SDK>=33 (HIDDeviceManager lines 195–199); a method-scoped lint suppression covers the guarded legacy overload. No checks are disabled for application code, and Android lint still aborts on errors. SDL's optional controller backend permissions are declared in the manifest; the inspector does not request Bluetooth access at startup.
+The pinned SDL Java glue receives integration fixes from `patches/sdl-android-lint.patch`. Bluetooth operations now catch permission denial at their method/callback boundaries and return an unavailable result; failed GATT operations are marked failed. The inspector does not request Bluetooth access at startup. These defensive paths are not a claim of tested Steam Controller support.
+
+Two narrow lint annotations document existing SDK guards: the API31 haptic implementation is instantiated only under SDK>=31 (SDLControllerManager lines 52–59), and USB receiver registration already selects explicit flags at SDK>=33 (HIDDeviceManager lines 195–199). No permission warning is suppressed, no checks are disabled for application code, and Android lint still aborts on errors.
 
 ## Data import and use
 
