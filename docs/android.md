@@ -12,6 +12,8 @@ Build failures are fatal. Test reports and available Android logs/lint reports a
 
 No APK or Android native builds have been run locally. The workflow target is `Hcode91/Jerusalem-Android`; see the validation status in the README and pull request for observed CI results.
 
+The pinned SDL Java glue receives two narrow lint annotations from `patches/sdl-android-lint.patch`. Its API31 haptic implementation is instantiated only under an existing SDK>=31 check (SDLControllerManager lines 52–59); the class annotation makes that guarantee visible to lint. Its USB receiver registration already selects explicit flags at SDK>=33 (HIDDeviceManager lines 195–199); a method-scoped lint suppression covers the guarded legacy overload. No checks are disabled for application code, and Android lint still aborts on errors. SDL's optional controller backend permissions are declared in the manifest; the inspector does not request Bluetooth access at startup.
+
 ## Data import and use
 
 1. Extract your original game data into an Android-accessible folder, preserving its directory tree. This app currently imports extracted resources, not disc images or Windows installers.
