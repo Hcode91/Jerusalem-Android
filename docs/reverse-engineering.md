@@ -178,3 +178,7 @@ Architecture references used for the independent app: [SDL Android integration](
 ## Original A01 graph and angular interactions
 
 [Milestone 7](a01-navigation-milestone-7.md) documents the initializer, node/exit registration APIs, angular coordinate conversion, hit bounds, enabled states and arrival cameras. A bounded static extractor matches 91 isolated original call captures, producing six nodes, 16 rotation links and one puzzle action. Android and SDL2 consume a user-derived native model; the disabled node-6 return stays disabled and the puzzle reports its implementation boundary. Story callbacks, original activation/timing and full gameplay remain unimplemented. The user has now confirmed animation inspection as well as audio/static-image/360-camera operation on Android.
+
+## A01 node entry, ambient sounds and presentation state
+
+The user confirmed A01 traversal on Android. [Milestone 8](a01-audio-milestone-8.md) traces actual node-entry sound activation, stream looping, original suffix fallback and volume conversion. It adds 17 extracted ambient bindings and native concurrent looping playback on Android, retaining shared tracks during transitions. The optional reference validates 303 original gain/pan arithmetic cases. New scene audio remains pending Android testing. Object/channel presentation APIs and A01 interaction handlers are partially mapped; their initial state, game clocks and story callbacks remain blockers for authentic automatic animation and pickup progression.

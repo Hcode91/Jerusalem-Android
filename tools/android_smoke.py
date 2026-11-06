@@ -255,17 +255,43 @@ def main():
         # These records and images are synthetic; no original executable is used in CI.
         for name in ('SYNTH_A', 'SYNTH_B'):
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}.aqc'", input=synthetic_animated_aqc())
-        model = ('JERUSALEM_A01_NAV_V1\nnode 1 SYNTH_A 2\nnode 2 SYNTH_B 2\n'
+        model = ('JERUSALEM_A01_NAV_V2\nnode 1 SYNTH_A 2\nnode 2 SYNTH_B 2\n'
                  'exit 1 0 2 0 1 0 -750 3600 750 53 0 0 0 85\n'
                  'exit 2 0 1 0 0 0 -750 3600 750 53 0 0 0 85\n'
-                 'exit 2 1 99 1 1 0 -750 3600 750 53 0 0 0 85\n')
+                 'exit 2 1 99 1 1 0 -750 3600 750 53 0 0 0 85\n'
+                 'ambient 1 7 80 SYNTH_LOOP\nambient 2 7 55 SYNTH_LOOP\n'
+                 'ambient 1 8 50 SYNTH_SECOND\n')
+        # Short, distinct generated loops exercise repeated refill and concurrent voices.
+        for name, frequency in (('SYNTH_LOOP', 330), ('SYNTH_SECOND', 550)):
+            sound = io.BytesIO()
+            with wave.open(sound, 'wb') as writer:
+                writer.setnchannels(1); writer.setsampwidth(2); writer.setframerate(8000)
+                writer.writeframes(b''.join(struct.pack('<h', int(8192*math.sin(2*math.pi*frequency*i/8000))) for i in range(1600)))
+            adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}.wav'", input=sound.getvalue())
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=model.encode())
         click_scrolling('A01 navigation')
         wait_for(lambda: b'A01 traversal: SYNTH_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Traversal mode did not load the initial synthetic scene')
+        wait_for(lambda: b'Scene audio active: SYNTH_LOOP.wav volume=80' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S') and
+                 b'Scene audio active: SYNTH_SECOND.wav volume=50' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Both synthetic ambient voices did not start')
+        wait_for(lambda: len(re.findall(rb'Scene audio loop: SYNTH_LOOP.wav wraps=', adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')))>=3,
+                 'Ambient stream did not continue refilling beyond initial queue')
+        adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
+        wait_for(lambda: b'Scene audio paused' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Backgrounding did not pause scene audio')
+        adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
+        wait_for(lambda: b'Scene audio resumed' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Returning to the app did not resume scene audio')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
         wait_for(lambda: b'A01 traversal: SYNTH_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Tapping an enabled exit did not change scene')
+        wait_for(lambda: b'Scene audio active: SYNTH_LOOP.wav volume=55' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Scene transition did not update the retained ambient voice volume')
+        logs = adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')
+        if logs.count(b'Scene audio opened: SYNTH_LOOP.wav') != 1 or b'Scene audio closed: SYNTH_SECOND.wav' not in logs:
+            raise RuntimeError('Scene transition restarted a retained track or kept an unused voice')
+
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
         wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Disabled return route or puzzle boundary was not respected')
@@ -273,7 +299,9 @@ def main():
         click_scrolling('A01 navigation')
         wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Traversal preview did not switch off')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Leaving traversal did not close ambient playback')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

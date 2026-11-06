@@ -18,9 +18,9 @@ ARITIES = {0x428120: 1, 0x42ad80: 1, 0x42af00: 5, 0x42b530: 4,
            0x42b860: 10, 0x42b9b0: 10, 0x42bab0: 10, 0x42bc00: 7}
 
 
-def capture(executable):
+def capture(executable, begin=BEGIN, end=END, arities=ARITIES):
     from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_PROT_READ, UC_PROT_WRITE, UC_PROT_EXEC, UC_HOOK_CODE
-    from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EIP
+    from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESI
     if hashlib.sha256(executable).hexdigest() != EXE_HASH:
         raise ValueError('unsupported original executable')
     pe = analyze(executable)
@@ -39,8 +39,8 @@ def capture(executable):
                 cpu.mem_map(page, 4096)
                 mapped.add(page)
         cpu.mem_write(address, data)
-    map_code(BEGIN, read(BEGIN, END-BEGIN))
-    for target, count in ARITIES.items():
+    map_code(begin, read(begin, end-begin))
+    for target, count in arities.items():
         map_code(target, b'\xc2' + struct.pack('<H', count*4))
     for page in mapped:
         cpu.mem_protect(page, 4096, UC_PROT_READ | UC_PROT_EXEC)
@@ -48,19 +48,72 @@ def capture(executable):
     cpu.mem_map(stack, 65536, UC_PROT_READ | UC_PROT_WRITE)
     cpu.reg_write(UC_X86_REG_ESP, stack+32768)
     cpu.reg_write(UC_X86_REG_ECX, 0x2000000)
+    cpu.reg_write(UC_X86_REG_ESI, 0x2000000)
     records = []
     def observe(machine, address, size, _):
-        if address in ARITIES:
-            count = ARITIES[address]
+        if address in arities:
+            count = arities[address]
             pointer = machine.reg_read(UC_X86_REG_ESP)
             records.append((address, list(struct.unpack('<'+'I'*count, machine.mem_read(pointer+4, count*4)))))
-        elif not (BEGIN <= address and address+size <= END):
+        elif not (begin <= address and address+size <= end):
             raise ValueError(f'setup capture escaped allowed code at {address:#x}')
     cpu.hook_add(UC_HOOK_CODE, observe)
-    cpu.emu_start(BEGIN, END, count=10000, timeout=1000000)
-    if cpu.reg_read(UC_X86_REG_EIP) != END:
+    cpu.emu_start(begin, end, count=10000, timeout=1000000)
+    if cpu.reg_read(UC_X86_REG_EIP) != end:
         raise ValueError('setup capture budget exceeded')
     return records, read
+
+
+def validate_attenuation(executable, read):
+    """Run only original gain/pan arithmetic plus its integer-conversion helper."""
+    from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_PROT_READ, UC_PROT_WRITE, UC_PROT_EXEC, UC_HOOK_CODE
+    from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_FPCW
+    cpu = Uc(UC_ARCH_X86, UC_MODE_32)
+    mapped = set()
+    def code(address, data):
+        for page in range(address & ~4095, (address+len(data)+4095) & ~4095, 4096):
+            if page not in mapped:
+                cpu.mem_map(page, 4096); mapped.add(page)
+        cpu.mem_write(address, data)
+    code(0x483cd0, read(0x483cd0, 0x67))
+    code(0x490b40, read(0x490b40, 0x27))
+    for address in (0x4a6618, 0x4be154, 0x4a67e8, 0x4a67e4, 0x4a67e0):
+        code(address, read(address, 4))
+    gain, pan, stop = 0x3000000, 0x3000010, 0x3000020
+    code(gain, b'\xc2\x04\x00'); code(pan, b'\xc2\x04\x00');code(stop, b'\x90')
+    for page in mapped:
+        cpu.mem_protect(page, 4096, UC_PROT_READ | UC_PROT_EXEC)
+    obj, stack = 0x1000000, 0x2000000
+    cpu.mem_map(obj, 4096, UC_PROT_READ | UC_PROT_WRITE)
+    cpu.mem_map(stack, 65536, UC_PROT_READ | UC_PROT_WRITE)
+    cpu.mem_write(obj, struct.pack('<I', obj+0x200))
+    cpu.mem_write(obj+0x204, struct.pack('<II', gain, pan))
+    captured = []
+    def guard(machine, address, size, _):
+        if address in (gain, pan):
+            sp = machine.reg_read(UC_X86_REG_ESP)
+            captured.append((address, struct.unpack('<i', machine.mem_read(sp+4, 4))[0]))
+        elif not (0x483cd0 <= address and address+size <= 0x483d37 or
+                  0x490b40 <= address and address+size <= 0x490b67):
+            raise ValueError('attenuation reference escaped arithmetic routines')
+    cpu.hook_add(UC_HOOK_CODE, guard)
+    results = {}
+    percent = struct.unpack('<f', read(0x4a6618, 4))[0]
+    for volume in range(101):
+        for master in (0, 50, 100):
+            cpu.mem_write(obj+0x111, struct.pack('<III', volume, master, 0))
+            sp = stack+32768
+            cpu.mem_write(sp, struct.pack('<I', stop))
+            cpu.reg_write(UC_X86_REG_ESP, sp);cpu.reg_write(UC_X86_REG_ECX, obj)
+            cpu.reg_write(UC_X86_REG_FPCW, 0x37f)
+            captured.clear()
+            cpu.emu_start(0x483cd0, stop, count=1000, timeout=100000)
+            expected = -10000-int((master*percent)*(volume*percent)*-10000)
+            if cpu.reg_read(UC_X86_REG_EIP) != stop or captured != [(gain, expected), (pan, 0)]:
+                raise ValueError(f'attenuation mismatch at {volume}/{master}: {captured}')
+            if master == 100 and volume in (0, 50, 55, 65, 70, 80, 100):
+                results[volume] = expected
+    return dict(cases=303, attenuation_hundredths_db=results)
 
 
 def validate(executable, model):
@@ -81,15 +134,17 @@ def validate(executable, model):
             camera = args[7:10] if target == 0x42b9b0 else args[2:5]
             exit.extend(map(real, camera))
     lines = model.splitlines()
-    if lines[0] != 'JERUSALEM_A01_NAV_V1':
+    if lines[0] not in ('JERUSALEM_A01_NAV_V1', 'JERUSALEM_A01_NAV_V2'):
         raise ValueError('unknown native model')
-    native_nodes, native_exits = [], []
+    native_nodes, native_exits, native_ambient = [], [], []
     for line in lines[1:]:
         cells = line.split()
         if cells[0] == 'node':
             native_nodes.append([int(cells[1]), cells[2], int(cells[3])])
         elif cells[0] == 'exit':
             native_exits.append([*map(int, cells[1:12]), *map(float, cells[12:15])])
+        elif cells[0] == 'ambient':
+            native_ambient.append([*map(int, cells[1:4]), cells[4]])
         else:
             raise ValueError('unknown native row')
     if nodes != native_nodes or len(exits) != len(native_exits):
@@ -97,8 +152,22 @@ def validate(executable, model):
     for original, native in zip(exits, native_exits, strict=True):
         if original[:11] != native[:11] or any(abs(a-b)>1e-8 for a, b in zip(original[11:], native[11:], strict=True)):
             raise ValueError(f'native exit differs: {original} vs {native}')
+    ambient, sounds = [], {}
+    for start in (0x47f1fe, 0x47f4f7, 0x47fa01):
+        registrations, _ = capture(executable, start, start+19, {0x42c8d0: 6})
+        _, args = registrations[0]
+        sounds[args[0]] = read(args[2], 64).split(b'\0')[0].decode('ascii').upper().rsplit('.', 1)[0]
+    for start, end in ((0x47f21f, 0x47f2c1), (0x47f518, 0x47f5ba), (0x47fa22, 0x47faa9)):
+        records, _ = capture(executable, start, end, {0x42c040: 7})
+        for _, args in records:
+            if args[3:] != [0, 1, 1, 10]:
+                raise ValueError('unsupported original ambient settings')
+            ambient.append([args[0], args[1], args[2], sounds[args[1]]])
+    if lines[0].endswith('V2') and ambient != native_ambient:
+        raise ValueError('native ambient registrations differ from original capture')
     return dict(captured_calls=len(calls), nodes=len(nodes), rotation_exits=sum(e[3]==0 for e in exits),
-                puzzle_actions=sum(e[3]==1 for e in exits), original_arguments_match=True)
+                puzzle_actions=sum(e[3]==1 for e in exits), ambient_bindings=len(native_ambient), original_arguments_match=True,
+                volume_reference=validate_attenuation(executable, read))
 
 
 def main():

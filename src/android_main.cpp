@@ -2,6 +2,7 @@
 #include "jerusalem/panorama.hpp"
 #include "jerusalem/aqc_animation.hpp"
 #include "jerusalem/navigation.hpp"
+#include "jerusalem/scene_audio.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -12,6 +13,9 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <thread>
+#include <chrono>
+#include <condition_variable>
 #include <sstream>
 #include <utility>
 
@@ -94,6 +98,102 @@ class Audio {
       report("Audio buffer drained: "+asset_+". Tap Play audio to replay.");
     }
   }
+};
+
+class SceneAmbience {
+  struct Voice {
+    jerusalem::LoopPcm pcm;
+    std::filesystem::path path;
+    std::unique_ptr<SDL_AudioStream,decltype(&SDL_DestroyAudioStream)> stream{nullptr,SDL_DestroyAudioStream};
+    std::uint64_t logged_wraps=0;
+    Voice(const std::filesystem::path& asset):pcm(jerusalem::read_file(asset)),path(asset) {
+      if (!(SDL_WasInit(SDL_INIT_AUDIO)&SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+        throw jerusalem::ParseError(std::string("Scene audio initialization: ")+SDL_GetError());
+      SDL_AudioSpec spec{}; const auto& w=pcm.wave();
+      spec.format=w.bits==8?SDL_AUDIO_U8:SDL_AUDIO_S16LE;spec.channels=w.channels;spec.freq=static_cast<int>(w.rate);
+      stream.reset(SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,nullptr,nullptr));
+      if (!stream) throw jerusalem::ParseError(std::string("Scene audio stream: ")+SDL_GetError());
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio opened: %s",path.filename().string().c_str());
+    }
+    ~Voice() { if (stream) __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio closed: %s",path.filename().string().c_str()); }
+    void fill() {
+      for (unsigned i=0;i<4;++i) {
+        const int queued=SDL_GetAudioStreamQueued(stream.get()),available=SDL_GetAudioStreamAvailable(stream.get());
+        if (queued<0 || available<0) throw jerusalem::ParseError(std::string("Scene audio queue: ")+SDL_GetError());
+        if (std::uint64_t(queued)+available>=8192*pcm.frame_bytes()) break;
+        auto block=pcm.read(4096);
+        if (!SDL_PutAudioStreamData(stream.get(),block.data(),static_cast<int>(block.size())))
+          throw jerusalem::ParseError(std::string("Scene audio refill: ")+SDL_GetError());
+        if (pcm.wraps()!=logged_wraps) {
+          logged_wraps=pcm.wraps();
+          __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio loop: %s wraps=%llu",path.filename().string().c_str(),static_cast<unsigned long long>(logged_wraps));
+        }
+      }
+    }
+  };
+  std::map<std::uint32_t,std::unique_ptr<Voice>> voices_;
+  std::mutex mutex_;
+  std::condition_variable wake_;
+  bool stopping_=false,paused_=false;
+  std::thread worker_;
+  void run() {
+    std::unique_lock<std::mutex> guard(mutex_);
+    while (!stopping_) {
+      if (!paused_) {
+        try { for (const auto& item:voices_) item.second->fill(); }
+        catch (const std::exception& e) {voices_.clear();report(std::string("Scene audio stopped: ")+e.what());}
+      }
+      wake_.wait_for(guard,std::chrono::milliseconds(paused_ || voices_.empty()?100:10));
+    }
+  }
+ public:
+  SceneAmbience():worker_([this]{run();}) {}
+  ~SceneAmbience() {
+    {std::lock_guard<std::mutex> guard(mutex_);stopping_=true;wake_.notify_all();}
+    worker_.join();
+  }
+  void stop() {
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (!voices_.empty()) __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio stopped");
+    voices_.clear();
+  }
+  void pause(bool paused) {
+    std::lock_guard<std::mutex> guard(mutex_);paused_=paused;wake_.notify_all();
+    if (!voices_.empty()) __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio %s",paused?"paused":"resumed");
+    for (const auto& item:voices_) {
+      const bool ok=paused?SDL_PauseAudioStreamDevice(item.second->stream.get()):SDL_ResumeAudioStreamDevice(item.second->stream.get());
+      if (!ok) report(std::string("Scene audio pause/resume: ")+SDL_GetError());
+    }
+  }
+  void set(const std::filesystem::path& node,const std::vector<jerusalem::SceneAmbient>& bindings) {
+    std::map<std::uint32_t,std::unique_ptr<Voice>> prepared;
+    std::size_t bytes=0;
+    std::map<std::uint32_t,std::size_t> retained;
+    {std::lock_guard<std::mutex> guard(mutex_);for(const auto& item:voices_) retained[item.first]=item.second->pcm.storage_bytes();}
+    std::set<std::uint32_t> desired;
+    for (const auto& binding:bindings) {
+      desired.insert(binding.sound);
+      if (!retained.count(binding.sound)) {
+        auto voice=std::make_unique<Voice>(checked_path(jerusalem::resolve_ambient_asset(node,binding.stem).string()));
+        bytes+=voice->pcm.storage_bytes();
+        if (bytes>128*1024*1024) throw jerusalem::ParseError("scene audio exceeds 128 MiB memory limit");
+        voice->fill(); prepared.emplace(binding.sound,std::move(voice));
+      } else bytes+=retained.at(binding.sound);
+      if (bytes>128*1024*1024) throw jerusalem::ParseError("scene audio exceeds 128 MiB memory limit");
+    }
+    std::lock_guard<std::mutex> guard(mutex_);
+    for (auto it=voices_.begin();it!=voices_.end();) {
+      if (!desired.count(it->first)) it=voices_.erase(it); else ++it;
+    }
+    for (auto& item:prepared) voices_.emplace(item.first,std::move(item.second));
+    for (const auto& binding:bindings) {
+      auto& voice=*voices_.at(binding.sound);
+      if (!SDL_SetAudioStreamGain(voice.stream.get(),static_cast<float>(jerusalem::ambient_gain(binding.volume))) ||
+          !(paused_?SDL_PauseAudioStreamDevice(voice.stream.get()):SDL_ResumeAudioStreamDevice(voice.stream.get()))) throw jerusalem::ParseError(std::string("Scene audio gain/start: ")+SDL_GetError());
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio active: %s volume=%u",voice.path.filename().string().c_str(),binding.volume);
+    }
+  }
+
 };
 
 class Renderer {
@@ -264,10 +364,11 @@ class Renderer {
   }
 };
 
-// This scene only inspects supported resources. It does not fabricate game navigation.
+// Traversal uses extracted original connections; story/puzzle callbacks remain separate.
 class InspectionScene {
   Renderer& renderer_;
   Audio& audio_;
+  SceneAmbience ambience_;
   std::optional<jerusalem::SceneGraph> navigation_;
   std::map<std::uint32_t,std::filesystem::path> assets_;
   std::optional<std::uint32_t> node_;
@@ -286,11 +387,17 @@ class InspectionScene {
     for (const auto& exit:navigation_->exits) if (exit.source==id) exits.push_back(exit);
     renderer_.exits(std::move(exits)); node_=id; selected_asset_=node.asset;
     report("A01 traversal: "+node.asset+". Drag to look; tap EXIT markers. Puzzle/dialogue/story events are not implemented. A01 navigation exits this mode.");
+    std::vector<jerusalem::SceneAmbient> bindings;
+    for (const auto& binding:navigation_->ambient) if (binding.node==id) bindings.push_back(binding);
+    try {
+      ambience_.set(path,bindings);
+      if (navigation_->ambient.empty()) report("A01 traversal: "+node.asset+". Scene audio needs updated connections: long-press A01 navigation and select the original executable again.");
+    } catch (const std::exception& e) { ambience_.stop(); report(std::string("Traversal ready; scene audio unavailable: ")+e.what()); }
   }
  public:
   InspectionScene(Renderer& r,Audio& a):renderer_(r),audio_(a) {}
   void open(const std::string& requested) {
-    node_.reset(); navigation_.reset(); assets_.clear();
+    node_.reset(); navigation_.reset(); assets_.clear(); ambience_.stop();
     audio_.stop(); renderer_.clear_image(); renderer_.preview("");
     try {
       const auto path=checked_path(requested);
@@ -315,9 +422,11 @@ class InspectionScene {
         report(description.summary);
     } catch (const std::exception& e) { renderer_.preview(e.what()); report(std::string("Asset error: ")+e.what()); }
   }
+  void pause_audio(bool paused) { ambience_.pause(paused); }
+  void stop_audio() { ambience_.stop(); }
   void toggle_navigation(bool reload=false) {
     if (node_ && !reload) {
-      node_.reset(); navigation_.reset(); assets_.clear(); renderer_.exits({});
+      node_.reset(); navigation_.reset(); assets_.clear(); renderer_.exits({}); ambience_.stop();
       report("A01 traversal off. Asset inspection controls remain available."); return;
     }
     try {
@@ -331,7 +440,7 @@ class InspectionScene {
       navigation_=std::move(graph); assets_=std::move(assets);
       enter(id,camera);
     } catch (const std::exception& e) {
-      navigation_.reset(); assets_.clear(); node_.reset(); renderer_.exits({});
+      navigation_.reset(); assets_.clear(); node_.reset(); renderer_.exits({}); ambience_.stop();
       report(std::string("A01 traversal unavailable: ")+e.what());
     }
   }
@@ -427,8 +536,8 @@ int main(int,char**) {
       SDL_Event event;
       while (SDL_PollEvent(&event)) {
         if (event.type==SDL_EVENT_QUIT) running=false;
-        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; touches.clear(); touch_moved=true; audio.pause(true); renderer.reset_animation_clock(); }
-        else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { background=false; audio.pause(false); renderer.reset_animation_clock(); }
+        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; touches.clear(); touch_moved=true; audio.pause(true); scene.pause_audio(true); renderer.reset_animation_clock(); }
+        else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { background=false; audio.pause(false); scene.pause_audio(false); renderer.reset_animation_clock(); }
         else if (event.type==SDL_EVENT_FINGER_DOWN) {
           if (touches.empty()) { active_touch=event.tfinger.fingerID; touch_x=event.tfinger.x; touch_y=event.tfinger.y; touch_moved=false; }
           else touch_moved=true;
@@ -460,7 +569,7 @@ int main(int,char**) {
       if (action&(1U<<1)) renderer.fit();
       if (action&(1U<<2)) renderer.zoom(1.25f);
       if (action&(1U<<3)) renderer.zoom(0.8f);
-      if (action&(1U<<4)) { audio.stop(); report("Audio stopped."); }
+      if (action&(1U<<4)) { audio.stop(); scene.stop_audio(); report("Audio stopped."); }
       if (action&(1U<<5)) renderer.toggle_camera();
       if (action&(1U<<6)) renderer.preview_animation();
       if (action&(1U<<7)) scene.toggle_navigation();

@@ -24,7 +24,7 @@ int main(int argc,char** argv) {
       if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
       std::ofstream out(root/"a01-navigation.tsv"); out << write_navigation(graph);
       if (!out) throw ParseError("cannot write native navigation model");
-      std::cout << graph.nodes.size() << " nodes, " << graph.exits.size() << " exits extracted without executing the program\n";
+      std::cout << graph.nodes.size() << " nodes, " << graph.exits.size() << " exits, " << graph.ambient.size() << " ambient bindings extracted without executing the program\n";
     }
     else if (mode=="map-panorama") {
       if (argc!=10) throw ParseError("map-panorama FILE YAW PITCH FOV WIDTH HEIGHT COLUMNS ROWS");

@@ -42,12 +42,13 @@ class Pe {
     }
     throw ParseError("PE address is not file backed");
   }
-  std::string name(std::uint32_t address) const {
+  std::string name(std::uint32_t address,bool filename=false) const {
     std::string text;
     for (unsigned i=0;i<64;++i) {
-      const auto c=at(address+i,1).u8(0);
+      auto c=at(address+i,1).u8(0);
+      if (filename && c>='a' && c<='z') c=std::uint8_t(c-'a'+'A');
       if (!c) return text;
-      if (!((c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='_')) throw ParseError("unsafe scene asset name");
+      if (!((c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='_' || (filename && c=='.'))) throw ParseError("unsafe scene asset name");
       text+=char(c);
     }
     throw ParseError("unterminated scene asset name");
@@ -127,6 +128,36 @@ SceneGraph extract_a01_navigation(Bytes b) {
   if (g.nodes.size()!=6 || g.exits.size()!=17 || configured.size()!=17 ||
       std::count_if(g.exits.begin(),g.exits.end(),[](const Exit& e){return e.puzzle;})!=1)
     throw ParseError("incomplete supported A01 scene setup");
+  // Three verified constant registration ranges; no game instructions execute.
+  const auto packet=[&](std::uint32_t start,std::uint32_t stop) {
+    const auto bytes=pe.at(start,stop-start);
+    std::vector<std::uint8_t> code{0x56,0x8b,0xf1};
+    code.insert(code.end(),bytes.data(),bytes.data()+bytes.size());
+    return parse_setup_calls(Bytes(code),start-3);
+  };
+  // Read the ID/name pushes from the actual SouAdd packets. Runtime load-source
+  // configuration preceding these pushes is deliberately outside this extractor.
+  std::map<std::uint32_t,std::string> sounds;
+  for (const auto address:{0x47f1feU,0x47f4f7U,0x47fa01U}) {
+    const auto p=pe.at(address,19);
+    if (p.u8(0)!=0x68 || p.u8(5)!=0x6a || p.u8(6)!=2 || p.u8(7)!=0x68 ||
+        !p.is(12,std::string("\x8b\xce\xe8",3)) ||
+        std::int64_t(address)+19+p.i32(15)!=0x42c8d0)
+      throw ParseError("unsupported ambient sound registration");
+    auto name=pe.name(p.u32(1),true);
+    if (name.size()<5 || (name.substr(name.size()-4)!=".WAV" && name.substr(name.size()-4)!=".WAS"))
+      throw ParseError("unsupported ambient resource suffix");
+    name.resize(name.size()-4);
+    sounds.emplace(p.u32(8),std::move(name));
+  }
+  for (const auto& range:{std::pair{0x47f21fU,0x47f2c1U},std::pair{0x47f518U,0x47f5baU},std::pair{0x47fa22U,0x47faa9U}})
+    for (const auto& call:packet(range.first,range.second)) {
+      const auto& a=call.arguments;
+      if (call.target!=0x42c040 || a.size()!=7 || a[3]!=0 || a[4]!=1 || a[5]!=1 || a[6]!=10 || !sounds.count(a[1]))
+        throw ParseError("unsupported ambient scene binding");
+      g.ambient.push_back({a[0],a[1],a[2],sounds.at(a[1])});
+    }
+  if (g.ambient.size()!=17) throw ParseError("incomplete A01 ambient setup");
   validate_navigation(g);
   return g;
 }
@@ -137,7 +168,7 @@ const SceneNode& scene_node(const SceneGraph& g,std::uint32_t id) {
   return *node;
 }
 void validate_navigation(const SceneGraph& g) {
-  if (g.nodes.empty() || g.nodes.size()>64 || g.exits.size()>512) throw ParseError("invalid navigation record counts");
+  if (g.nodes.empty() || g.nodes.size()>64 || g.exits.size()>512 || g.ambient.size()>192) throw ParseError("invalid navigation record counts");
   std::set<std::uint32_t> ids;
   std::set<std::string> names;
   std::set<std::pair<std::uint32_t,std::uint32_t>> slots;
@@ -146,6 +177,21 @@ void validate_navigation(const SceneGraph& g) {
       throw ParseError("invalid/duplicate scene node");
     for (unsigned char c:n.asset) if (!((c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='_'))
       throw ParseError("unsafe scene asset name");
+  }
+  std::set<std::pair<std::uint32_t,std::uint32_t>> bindings;
+  std::map<std::uint32_t,std::string> sound_names;
+  std::map<std::string,std::uint32_t> sound_ids;
+  for (const auto& a:g.ambient) {
+    scene_node(g,a.node);
+    if (!a.sound || a.sound>0x7fffffffU || a.volume>100 || a.stem.empty() || a.stem.size()>63 ||
+        !bindings.insert({a.node,a.sound}).second) throw ParseError("invalid/duplicate ambient binding");
+    for (unsigned char c:a.stem) if (!((c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='_'))
+      throw ParseError("unsafe ambient resource stem");
+    if ((sound_names.count(a.sound) && sound_names.at(a.sound)!=a.stem) ||
+        (sound_ids.count(a.stem) && sound_ids.at(a.stem)!=a.sound)) throw ParseError("conflicting ambient identity");
+    sound_names[a.sound]=a.stem; sound_ids[a.stem]=a.sound;
+    if (std::count_if(g.ambient.begin(),g.ambient.end(),[&](const SceneAmbient& other){return other.node==a.node;})>3)
+      throw ParseError("too many ambient voices in scene");
   }
   for (const auto& e:g.exits) {
     scene_node(g,e.source); if (!e.puzzle) scene_node(g,e.target);
@@ -161,18 +207,20 @@ void validate_navigation(const SceneGraph& g) {
 
 std::string write_navigation(const SceneGraph& g) {
   validate_navigation(g);
-  std::ostringstream out; out.imbue(std::locale::classic()); out << "JERUSALEM_A01_NAV_V1\n" << std::setprecision(12);
+  std::ostringstream out; out.imbue(std::locale::classic()); out << (g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
   for (const auto& n:g.nodes) out << "node " << n.id << ' ' << n.asset << ' ' << n.channels << '\n';
   for (const auto& e:g.exits)
     out << "exit " << e.source << ' ' << e.slot << ' ' << e.target << ' ' << e.puzzle << ' ' << e.enabled << ' '
         << e.left << ' ' << e.top << ' ' << e.right << ' ' << e.bottom << ' ' << e.cursor << ' ' << e.event << ' '
         << e.arrival.yaw << ' ' << e.arrival.pitch << ' ' << e.arrival.fov << '\n';
+  for (const auto& a:g.ambient) out << "ambient " << a.node << ' ' << a.sound << ' ' << a.volume << ' ' << a.stem << '\n';
   return out.str();
 }
 SceneGraph parse_navigation(const std::string& text) {
   if (text.size()>128*1024) throw ParseError("navigation model exceeds 128 KiB limit");
   std::istringstream lines(text); std::string line;
-  if (!std::getline(lines,line) || line!="JERUSALEM_A01_NAV_V1") throw ParseError("not a native A01 navigation model");
+  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2")) throw ParseError("not a native A01 navigation model");
+  const bool audio=line=="JERUSALEM_A01_NAV_V2";
   SceneGraph g;
   while (std::getline(lines,line)) {
     if (line.empty()) continue;
@@ -187,6 +235,11 @@ SceneGraph parse_navigation(const std::string& text) {
                >>e.arrival.yaw>>e.arrival.pitch>>e.arrival.fov) || puzzle>1 || enabled>1 || (row>>extra) || g.exits.size()>=512)
         throw ParseError("invalid exit model row");
       e.puzzle=puzzle!=0; e.enabled=enabled!=0; g.exits.push_back(e);
+    } else if (kind=="ambient" && audio) {
+      SceneAmbient a{};
+      if (!(row>>a.node>>a.sound>>a.volume>>a.stem) || (row>>extra) || g.ambient.size()>=192)
+        throw ParseError("invalid ambient model row");
+      g.ambient.push_back(std::move(a));
     } else throw ParseError("unknown navigation model row");
   }
   validate_navigation(g); return g;
@@ -217,6 +270,23 @@ std::map<std::uint32_t,std::filesystem::path> resolve_scene_assets(const std::fi
   for (const auto& node:g.nodes) if (!found.count(node.id))
     throw ParseError("missing scene asset "+node.asset+".AQC; import the complete original DATA folder");
   return found;
+}
+std::filesystem::path resolve_ambient_asset(const std::filesystem::path& node,const std::string& stem) {
+  if (stem.empty() || stem.size()>63) throw ParseError("invalid ambient resource stem");
+  const auto upper=[](std::string s){for(auto& c:s) if(c>='a'&&c<='z') c=char(c-'a'+'A');return s;};
+  for (const auto c:stem) if (!((c>='A'&&c<='Z') || (c>='0'&&c<='9') || c=='_')) throw ParseError("unsafe ambient resource stem");
+  auto area=node.parent_path();
+  if (upper(area.filename().string())=="NODE") area=area.parent_path();
+  std::map<std::string,std::filesystem::path> matches; std::size_t count=0;
+  for (auto it=std::filesystem::recursive_directory_iterator(area);it!=std::filesystem::recursive_directory_iterator();++it) {
+    if (++count>10000 || it.depth()>32) throw ParseError("ambient asset scan limit exceeded");
+    if (it->is_symlink() || !it->is_regular_file()) continue;
+    const auto file=upper(it->path().filename().string());
+    for (const auto suffix:{".WAS",".WAC",".WAV"}) if (file==stem+suffix)
+      if (!matches.emplace(suffix,std::filesystem::canonical(it->path())).second) throw ParseError("duplicate ambient asset: "+file);
+  }
+  for (const auto suffix:{".WAS",".WAC",".WAV"}) if (matches.count(suffix)) return matches.at(suffix);
+  throw ParseError("missing scene sound: "+stem+" (.WAS/.WAC/.WAV); import the original area SOUND folder");
 }
 HotspotPoint hotspot_point(const PanoramaGeometry& g,TexturePoint p) {
   if (!g.width || !g.height || g.width>8192 || g.height>8192 || !std::isfinite(p.x) || !std::isfinite(p.y) ||

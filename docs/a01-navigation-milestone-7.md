@@ -71,3 +71,5 @@ All six host CTest groups pass with address/undefined sanitizers and the documen
 Actions now exercises a synthetic two-node transition, disabled overlapping return, unavailable puzzle action and exit from traversal mode. It uses no original executable or assets. **The new Android build, emulator test and phone traversal are pending.** No APK was built locally.
 
 Next priorities are original story/intro handlers, channel enable/visibility and timing, the node-6 puzzle, and dialogue/CI2 decoding. Traversal preview establishes genuine graph/hotspot extraction without claiming that A01 is playable from start to finish.
+
+Subsequent device result: the user confirmed A01 traversal. [Milestone 8](a01-audio-milestone-8.md) adds original ambient bindings and a backward-compatible V2 model; its new audio path has separate pending Actions/device checks.

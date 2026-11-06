@@ -64,3 +64,9 @@ Animation inspection has now been confirmed on the user's phone. The next APK ad
 This is a traversal preview, not the original scripted opening or complete A01 gameplay. It does not automatically play ambient audio, dialogue or animations, apply story events, complete puzzles or save progression. All assets stay user-supplied. Missing/duplicate node files and unsupported executables produce explicit diagnostics. See [evidence, limits and tests](a01-navigation-milestone-7.md).
 
 The new Android build/emulator checks and real-phone traversal remain pending. Existing device confirmations establish earlier functionality only.
+
+## Original A01 scene audio (milestone 8)
+
+The user confirmed A01 traversal on Android. The latest source adds automatic music/wind/bees playback using original per-node bindings. After installing the next Actions APK, **long-press A01 navigation and select the original executable again** to refresh the older V1 model. Import A01's original SOUND directory as well as NODE. Music may be stored as TRACK02.WAS although the executable names it track02.wav; the resolver follows the original extension order.
+
+Shared tracks retain their playback position between nodes, volumes change with the original registrations, and node 6 removes the bees track. Stop audio stops scene streams; backgrounding pauses them; leaving traversal or browsing stops them. Missing sound data produces an explicit diagnostic while traversal stays available. Original fades, story/animation activation and preference master volumes remain unimplemented. See [milestone 8](a01-audio-milestone-8.md) for evidence, tests and limits. This new scene-audio build and phone result remain pending.
