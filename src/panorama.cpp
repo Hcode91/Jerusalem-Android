@@ -1,4 +1,5 @@
 #include "jerusalem/panorama.hpp"
+#include "jerusalem/navigation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -79,6 +80,23 @@ TexturePoint panorama_point(const PanoramaGeometry& g,const Camera& c,double nx,
   if (!std::isfinite(nx) || !std::isfinite(ny) || nx< -1 || nx>1 || ny< -1 || ny>1)
     throw ParseError("panorama sample is outside the viewport");
   return Projection(g,c,width,height).point(nx,ny);
+}
+
+std::optional<TexturePoint> hotspot_screen(const PanoramaGeometry& g,const Camera& c,double yaw,double pitch,unsigned width,unsigned height) {
+  validate(g,width,height); validate_camera(c);
+  if (c.fov<30 || c.fov>87) throw ParseError("unsupported hotspot camera FOV");
+  if (!std::isfinite(yaw) || !std::isfinite(pitch) || yaw<0 || yaw>3600 || pitch< -900 || pitch>900)
+    throw ParseError("invalid angular hotspot centre");
+  const auto longitude=(yaw/10-180)*radians,latitude=pitch/10*radians;
+  const auto x=std::sin(longitude)*std::cos(latitude),y=std::sin(latitude),z=std::cos(longitude)*std::cos(latitude);
+  const auto sy=std::sin(c.yaw*radians),cy=std::cos(c.yaw*radians),sp=std::sin(c.pitch*radians),cp=std::cos(c.pitch*radians);
+  const auto forward=sy*cp*x+sp*y+cy*cp*z;
+  if (forward<=0) return std::nullopt;
+  const auto half=c.fov*radians/2;
+  const auto nx=(cy*x-sy*z)/forward/std::tan(half)*std::max(width,height)/width;
+  const auto ny=(-sy*sp*x+cp*y-cy*sp*z)/forward/std::tan(half)*std::max(width,height)/height;
+  if (std::abs(nx)>1 || std::abs(ny)>1) return std::nullopt;
+  return TexturePoint{nx,ny};
 }
 
 Bitmap render_panorama(const Bitmap& source,const PanoramaGeometry& g,Camera c,unsigned width,unsigned height) {

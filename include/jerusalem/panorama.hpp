@@ -6,7 +6,7 @@ struct PanoramaGeometry {
   std::uint32_t width, height;
   double yaw_min, yaw_max, pitch_min, pitch_max;
 };
-// Constructor defaults observed in the original. Scene-specific overrides are not recovered.
+// Constructor defaults observed in the original. Supported A01 transition overrides are extracted separately.
 struct Camera { double yaw=225, pitch=0, fov=85; };
 struct TexturePoint { double x, y; };
 PanoramaGeometry panorama_geometry(Bytes aqc);

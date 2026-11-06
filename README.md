@@ -1,6 +1,6 @@
 # Jerusalem native engine research
 
-An independent C++17 engine reimplementation with an SDL2 desktop panorama viewer and SDL3 Android inspector for **Jerusalem: The 3 Roads to the Holy Land**. The current build is an **asset inspector**, not a playable game. No Windows compatibility layer is used. No original binaries, game art, audio, or proprietary samples are distributed.
+An independent C++17 engine reimplementation with an SDL2 desktop panorama viewer and SDL3 Android inspector for **Jerusalem: The 3 Roads to the Holy Land**. The current build provides **asset inspection and an A01 traversal preview**, not a playable game. No Windows compatibility layer is used. No original binaries, game art, audio, or proprietary samples are distributed.
 
 ## Implemented
 
@@ -8,8 +8,9 @@ An independent C++17 engine reimplementation with an SDL2 desktop panorama viewe
 - Original aMes/aObj localization table parsing, preserving order, duplicate IDs, and original bytes.
 - DAN level and interval parsing for the observed text dialect, with explicit `END` termination.
 - PE32 static inspection: sections, named/ordinal imports, relevant strings, SHA-256 identity. It never executes Windows code.
-- Ghidra loader tracing, WAC/WAS block/token inspection and native/Python PCM conversion for the verified mono/stereo dialect. Outputs match the original decoder routines on fifteen complete assets. See [audio decoding and validation](docs/wac-was-milestone-3.md). Android playback is connected and awaits device verification.
+- Ghidra loader tracing, WAC/WAS block/token inspection and native/Python PCM conversion for the verified mono/stereo dialect. Outputs match the original decoder routines on fifteen complete assets. See [audio decoding and validation](docs/wac-was-milestone-3.md). Audio playback has been confirmed by the user on Android.
 - Native AQC static-image decoding and Python PNG/native PPM export, verified on all 19 Disc 1 nodes. See [AQC findings](docs/aqc-milestone-4.md). A verified spherical 360-degree camera now supports touch look-around, FOV zoom and a flat/360 toggle; see [camera evidence and SDL2 viewer](docs/panorama-milestone-5.md). Original patch-frame decoding and explicit animation inspection now cover 18 nodes; see [channel evidence and preview controls](docs/aqc-animation-milestone-6.md). One A09 channel variant and original activation/timing remain unsupported.
+- Bounded extraction of six A01 nodes and 17 navigation/puzzle actions from the supported user-supplied executable, with original angular hit tests and arrival cameras. Android/SDL2 traversal previews preserve disabled routes and stop at unimplemented puzzles. See [A01 evidence and usage](docs/a01-navigation-milestone-7.md).
 - Standard uncompressed 24/32-bit BMP decoding and integer PCM WAV inspection/playback. The WAV parser has processed all 30 standard WAV files on Disc 1, including an original menu sound.
 - Streaming ISO9660 extraction from the supplied MODE1/2352 disc image, with checked extents and dual-endian fields.
 - CUE validation for the supplied single MODE1/2352 data-track layout; conventional key/value INI parsing as a separate, explicitly selected dialect.
@@ -31,6 +32,7 @@ build-host/jinspect at3 /path/to/a01.at3
 build-host/jinspect localized /path/to/aObj.ini
 build-host/jinspect describe /path/to/aObj.ini
 build-host/jinspect dan /path/to/clip.dan
+build-host/jinspect extract-a01-navigation /path/to/Jerusalem.ex_ /path/to/new-output-directory
 build-host/jinspect extract-at3 /path/to/a01.at3 /path/to/new-output-directory
 build-host/jinspect extract-media /path/to/resource /path/to/new-output-directory
 python3 tools/pe_probe.py /path/to/Jerusalem.ex_
@@ -53,7 +55,7 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-Current host validation passes CMake/CTest with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds and 44 Python regression tests, 30 native panorama checks and 233 animation checks. CTest also runs the synthetic audio cases through the native decoder. Fifteen original WAC/WAS outputs match original decoder instructions byte for byte after documented container normalization. Standard WAV playback, original AQC static-image display and the 360 camera have been confirmed on the user's device. New animation-preview controls and expanded synthetic emulator coverage await Actions/device results; APKs are built only in Actions. The app remains an asset/panorama inspector without scripted scene navigation or gameplay.
+Current host validation passes all six CTest groups with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds, 44 Python regressions, 30 panorama checks, 233 animation checks and 78 navigation checks. Fifteen original WAC/WAS outputs match original decoder instructions after documented container normalization. A01 extraction matches 91 isolated original registration calls. Audio, original static images, the 360 camera and animation inspection have been confirmed on the user's Android device. The new A01 traversal preview and expanded emulator checks await Actions/device results; APKs are built only in Actions. Story, dialogue, inventory and puzzles remain unimplemented.
 
 ## Roadmap
 

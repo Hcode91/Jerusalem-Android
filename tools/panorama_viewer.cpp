@@ -1,7 +1,9 @@
 #include "jerusalem/panorama.hpp"
 #include "jerusalem/aqc_animation.hpp"
+#include "jerusalem/navigation.hpp"
 #include <SDL.h>
 #include <utility>
+#include <cmath>
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -9,18 +11,20 @@
 
 int main(int argc,char** argv) {
   try {
-    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview]");
+    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview] [--navigation MODEL]");
     std::optional<unsigned long> limit;
     bool start_preview=false;
+    std::optional<std::filesystem::path> navigation_file;
     for (int i=2;i<argc;++i) {
       if (std::string(argv[i])=="--preview") start_preview=true;
+      else if (std::string(argv[i])=="--navigation" && i+1<argc) navigation_file=argv[++i];
       else if (std::string(argv[i])=="--frames" && i+1<argc) {
         limit=std::stoul(argv[++i]);
         if (*limit==0) throw jerusalem::ParseError("frame limit must be positive");
       } else throw jerusalem::ParseError("unknown viewer option");
     }
     auto data=jerusalem::read_file(argv[1]);
-    const auto geometry=jerusalem::panorama_geometry(jerusalem::Bytes(data));
+    auto geometry=jerusalem::panorama_geometry(jerusalem::Bytes(data));
     auto source=jerusalem::decode_aqc(jerusalem::Bytes(data));
     std::unique_ptr<jerusalem::AqcPreview> preview;
     try { preview=std::make_unique<jerusalem::AqcPreview>(std::move(data),source); }
@@ -56,6 +60,42 @@ int main(int argc,char** argv) {
     if (start_preview) cycle_preview();
     unsigned long frames=0;
     int texture_width=0,texture_height=0;
+    std::optional<jerusalem::SceneGraph> navigation;
+    std::map<std::uint32_t,std::filesystem::path> scene_assets;
+    std::uint32_t current=0;
+    if (navigation_file) {
+      const auto bytes=jerusalem::read_file(*navigation_file);
+      navigation=jerusalem::parse_navigation(std::string(bytes.begin(),bytes.end()));
+      scene_assets=jerusalem::resolve_scene_assets(navigation_file->parent_path().empty()?std::filesystem::path("."):navigation_file->parent_path(),*navigation);
+      auto stem=std::filesystem::path(argv[1]).stem().string();
+      for (auto& c:stem) if (c>='a'&&c<='z') c=char(c-'a'+'A');
+      for (const auto& node:navigation->nodes) if (node.asset==stem) current=node.id;
+      if (!current) throw jerusalem::ParseError("initial AQC is not in the supplied navigation model");
+      std::cout << "A01 traversal preview ready; story and puzzle actions are not implemented\n";
+    }
+    bool mouse_moved=false; int mouse_start_x=0,mouse_start_y=0;
+    const auto tap=[&](float x,float y,int width,int height) {
+      if (!navigation || width<=0 || height<=0) return;
+      camera=jerusalem::constrain_camera(geometry,camera,width,height);
+      const auto point=jerusalem::hotspot_point(geometry,jerusalem::panorama_point(geometry,camera,2*x/width-1,2*y/height-1,width,height));
+      const auto match=jerusalem::navigation_hit(*navigation,current,point.x,point.y);
+      if (!match) return;
+      const auto exit=navigation->exits[*match];
+      if (exit.puzzle) { std::cout << "Original puzzle action is not implemented; no route bypassed\n"; return; }
+      try {
+        auto bytes=jerusalem::read_file(scene_assets.at(exit.target));
+        auto image=jerusalem::decode_aqc(jerusalem::Bytes(bytes));
+        const auto next_geometry=jerusalem::panorama_geometry(jerusalem::Bytes(bytes));
+        if (jerusalem::parse_aqc_channels(jerusalem::Bytes(bytes)).size()!=jerusalem::scene_node(*navigation,exit.target).channels)
+          throw jerusalem::ParseError("scene channel count differs from original setup");
+        auto next_preview=std::make_unique<jerusalem::AqcPreview>(std::move(bytes),image);
+        source=std::move(image); geometry=next_geometry; preview=std::move(next_preview);
+        current=exit.target; camera=exit.arrival; saved_camera.reset(); preview_tick=SDL_GetTicks(); dirty=true;
+        const auto title=jerusalem::scene_node(*navigation,current).asset+" / traversal preview; puzzles unavailable";
+        SDL_SetWindowTitle(window.get(),title.c_str());
+        std::cout << "A01 traversal: " << jerusalem::scene_node(*navigation,current).asset << '\n';
+      } catch (const std::exception& e) { std::cerr << "Cannot enter scene: " << e.what() << '\n'; }
+    };
     while (running) {
       int width,height;
       if (SDL_GetRendererOutputSize(renderer.get(),&width,&height)!=0) throw std::runtime_error(SDL_GetError());
@@ -69,9 +109,13 @@ int main(int argc,char** argv) {
         } else if (event.type==SDL_WINDOWEVENT && (event.window.event==SDL_WINDOWEVENT_FOCUS_LOST || event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED)) {
           foreground=event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED;
           preview_tick=SDL_GetTicks();
-        } else if (event.type==SDL_MOUSEBUTTONDOWN && event.button.button==SDL_BUTTON_LEFT) dragging=true;
-        else if (event.type==SDL_MOUSEBUTTONUP && event.button.button==SDL_BUTTON_LEFT) dragging=false;
+        } else if (event.type==SDL_MOUSEBUTTONDOWN && event.button.button==SDL_BUTTON_LEFT) { dragging=true; mouse_moved=false; mouse_start_x=event.button.x; mouse_start_y=event.button.y; }
+        else if (event.type==SDL_MOUSEBUTTONUP && event.button.button==SDL_BUTTON_LEFT) {
+          if (dragging && !mouse_moved) tap(float(event.button.x),float(event.button.y),width,height);
+          dragging=false;
+        }
         else if (event.type==SDL_MOUSEMOTION && dragging) {
+          if (std::abs(event.motion.x-mouse_start_x)+std::abs(event.motion.y-mouse_start_y)>3) mouse_moved=true;
           camera.yaw-=event.motion.xrel*camera.fov/std::max(width,1);
           camera.pitch-=event.motion.yrel*camera.fov/std::max(height,1); dirty=true;
         } else if (event.type==SDL_MOUSEWHEEL) {
@@ -100,12 +144,19 @@ int main(int argc,char** argv) {
         }
         if (SDL_RenderClear(renderer.get())!=0 || SDL_RenderCopy(renderer.get(),texture.get(),nullptr,nullptr)!=0)
           throw std::runtime_error(SDL_GetError());
+        if (navigation) for (const auto& exit:navigation->exits) if (exit.source==current && exit.enabled) {
+          const auto point=jerusalem::hotspot_screen(geometry,camera,(exit.left+exit.right)/2.0,(exit.top+exit.bottom)/2.0,rw,rh);
+          if (!point) continue;
+          SDL_SetRenderDrawColor(renderer.get(),exit.puzzle?240:90,exit.puzzle?160:230,100,255);
+          SDL_Rect marker{int((point->x+1)*width/2)-14,int((point->y+1)*height/2)-14,28,28};
+          SDL_RenderDrawRect(renderer.get(),&marker);
+        }
         SDL_RenderPresent(renderer.get());
         if (limit && ++frames>=*limit) running=false;
       }
       SDL_Delay(16);
     }
-    std::cout << "SDL2 panorama viewer completed; no navigation or scripted interactions implemented\n";
+    std::cout << "SDL2 panorama viewer completed; traversal preview is separate from unimplemented story/puzzle logic\n";
     return 0;
   } catch (const std::exception& e) { std::cerr << "Error: " << e.what() << '\n'; return 1; }
 }

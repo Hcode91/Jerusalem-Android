@@ -85,3 +85,5 @@ All five host CTest groups pass with address/undefined sanitizers (and the docum
 The Actions Android smoke test generates its own animated AQC, scrolls to Preview animation, requires two distinct native frame indices, and verifies switching preview off. It packages no original data. All APK builds remain exclusive to Actions. The new preview feature awaits Actions and device results; the user has already confirmed the earlier static-image and 360 camera functionality.
 
 Next work is to resolve the special A09 record and extract scene-specific channel activation/frame-clock settings from the executable, then link verified scene transitions and hotspots. Inspection preview is not a substitute for that game logic.
+
+Subsequent device result: the user confirmed that animation previews work. [Milestone 7](a01-navigation-milestone-7.md) now adds separately researched A01 traversal.
