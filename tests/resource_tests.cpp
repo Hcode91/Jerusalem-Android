@@ -1,4 +1,5 @@
 #include "jerusalem/resources.hpp"
+#include "jerusalem/aqc_animation.hpp"
 #include <functional>
 #include <iostream>
 #include <random>
@@ -107,6 +108,7 @@ int main() {
       attempt([&]{parse_at3(Bytes(noise),true);}); attempt([&]{scan_media(Bytes(noise));});
       attempt([&]{decode_game_audio(Bytes(noise));});
       attempt([&]{decode_aqc(Bytes(noise));});
+      attempt([&]{parse_aqc_channels(Bytes(noise));});
     }
     // Optional private regression: no samples are copied into the repository.
     if (const char* path=std::getenv("JERUSALEM_PRIVATE_AT3")) {

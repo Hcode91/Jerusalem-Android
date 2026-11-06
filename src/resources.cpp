@@ -1,4 +1,5 @@
 #include "jerusalem/resources.hpp"
+#include "jerusalem/aqc_animation.hpp"
 #include <algorithm>
 #include <fstream>
 #include <limits>
@@ -317,10 +318,17 @@ ResourceDescription describe_resource(Bytes b, const std::string& filename) {
   if (b.size()>=56 && b.u32(12)==2 && b.u32(52)==b.u32(4)*2) {
     const auto node=parse_aqc(b);
     const auto summary="AQC static node image: "+std::to_string(node.width)+" x "+std::to_string(node.height)+".";
-    const auto details=summary+"\nThe native view offers the verified spherical 360-degree camera for supported angular bounds.\n"
+    auto details=summary+"\nThe native view offers the verified spherical 360-degree camera for supported angular bounds.\n"
         "Drag to look around, use Zoom, or choose Flat / 360 to inspect the full image. Fit image resets the camera.\n"
-        "Trailing bytes not decoded: "+std::to_string(node.tail_size)+
-        ". Embedded animations, navigation and hotspots are not implemented.";
+        "Bytes after the base image: "+std::to_string(node.tail_size)+".\n";
+    try {
+      const auto channels=parse_aqc_channels(b);
+      std::size_t frames=0;
+      for (const auto& channel:channels) frames+=channel.frames.size();
+      details+="Channel records: "+std::to_string(channels.size())+", patch frames: "+std::to_string(frames)+
+          ".\nUse Preview animation to inspect multi-frame patches at a 12 fps preview speed. Tap again to cycle/off.\n";
+    } catch (const ParseError& e) { details+="Channel preview unavailable: "+std::string(e.what())+"\n"; }
+    details+="Original channel triggers/timing, navigation and hotspots are not implemented.";
     return result(ResourceKind::AqcImage,summary,details);
   }
 

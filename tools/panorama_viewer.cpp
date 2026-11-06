@@ -1,5 +1,7 @@
 #include "jerusalem/panorama.hpp"
+#include "jerusalem/aqc_animation.hpp"
 #include <SDL.h>
+#include <utility>
 #include <algorithm>
 #include <iostream>
 #include <memory>
@@ -7,16 +9,22 @@
 
 int main(int argc,char** argv) {
   try {
-    if (argc!=2 && argc!=4) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT]");
+    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview]");
     std::optional<unsigned long> limit;
-    if (argc==4) {
-      if (std::string(argv[2])!="--frames") throw jerusalem::ParseError("unknown viewer option");
-      limit=std::stoul(argv[3]);
-      if (*limit==0) throw jerusalem::ParseError("frame limit must be positive");
+    bool start_preview=false;
+    for (int i=2;i<argc;++i) {
+      if (std::string(argv[i])=="--preview") start_preview=true;
+      else if (std::string(argv[i])=="--frames" && i+1<argc) {
+        limit=std::stoul(argv[++i]);
+        if (*limit==0) throw jerusalem::ParseError("frame limit must be positive");
+      } else throw jerusalem::ParseError("unknown viewer option");
     }
-    const auto data=jerusalem::read_file(argv[1]);
+    auto data=jerusalem::read_file(argv[1]);
     const auto geometry=jerusalem::panorama_geometry(jerusalem::Bytes(data));
-    const auto source=jerusalem::decode_aqc(jerusalem::Bytes(data));
+    auto source=jerusalem::decode_aqc(jerusalem::Bytes(data));
+    std::unique_ptr<jerusalem::AqcPreview> preview;
+    try { preview=std::make_unique<jerusalem::AqcPreview>(std::move(data),source); }
+    catch (const jerusalem::ParseError& e) { std::cerr << "Animation unavailable: " << e.what() << '\n'; if (start_preview) throw; }
     if (SDL_Init(SDL_INIT_VIDEO)!=0) throw std::runtime_error(SDL_GetError());
     struct Quit { ~Quit(){SDL_Quit();} } quit;
     std::unique_ptr<SDL_Window,decltype(&SDL_DestroyWindow)> window(
@@ -28,7 +36,24 @@ int main(int argc,char** argv) {
     if (!renderer) throw std::runtime_error(SDL_GetError());
     std::unique_ptr<SDL_Texture,decltype(&SDL_DestroyTexture)> texture(nullptr,SDL_DestroyTexture);
     jerusalem::Camera camera;
+    std::optional<jerusalem::Camera> saved_camera;
     bool running=true,dirty=true,dragging=false;
+    bool foreground=true;
+    Uint32 preview_tick=SDL_GetTicks();
+    const auto cycle_preview=[&] {
+      if (!preview) { std::cerr << "Animation preview is unavailable for this node\n"; return; }
+      const bool was_active=preview->channel().has_value();
+      if (preview->next()) {
+        if (!was_active) saved_camera=camera;
+        const auto& rect=preview->selected()->frames.front();
+        camera.yaw=(rect.left+rect.width/2.0)/geometry.width*360-180;
+        camera.pitch=(rect.top+rect.height/2.0)/geometry.height*(geometry.pitch_max-geometry.pitch_min)+geometry.pitch_min;
+        camera.fov=30;
+        std::cout << "Animation preview: channel " << *preview->channel()+1 << " at 12 fps inspector speed; game triggers not implemented\n";
+      } else if (saved_camera) { camera=*saved_camera; saved_camera.reset(); }
+      preview_tick=SDL_GetTicks(); dirty=true;
+    };
+    if (start_preview) cycle_preview();
     unsigned long frames=0;
     int texture_width=0,texture_height=0;
     while (running) {
@@ -40,6 +65,10 @@ int main(int argc,char** argv) {
         else if (event.type==SDL_KEYDOWN) {
           if (event.key.keysym.sym==SDLK_ESCAPE) running=false;
           if (event.key.keysym.sym==SDLK_HOME) { camera={}; dirty=true; }
+          if (event.key.keysym.sym==SDLK_a) cycle_preview();
+        } else if (event.type==SDL_WINDOWEVENT && (event.window.event==SDL_WINDOWEVENT_FOCUS_LOST || event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED)) {
+          foreground=event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED;
+          preview_tick=SDL_GetTicks();
         } else if (event.type==SDL_MOUSEBUTTONDOWN && event.button.button==SDL_BUTTON_LEFT) dragging=true;
         else if (event.type==SDL_MOUSEBUTTONUP && event.button.button==SDL_BUTTON_LEFT) dragging=false;
         else if (event.type==SDL_MOUSEMOTION && dragging) {
@@ -49,6 +78,12 @@ int main(int argc,char** argv) {
           camera.fov=std::clamp(camera.fov-(event.wheel.y*5),30.0,87.0); dirty=true;
         }
       }
+      const auto now=SDL_GetTicks();
+      if (preview && foreground && preview->update(source,now-preview_tick)) {
+        dirty=true;
+        if (preview->channel()) std::cout << "AQC preview frame: channel=" << *preview->channel() << " frame=" << *preview->frame() << '\n';
+      }
+      preview_tick=now;
       if (width>0 && height>0) {
         const double scale=std::min(1.0,640.0/std::max(width,height));
         const auto rw=std::max(1,static_cast<int>(width*scale)),rh=std::max(1,static_cast<int>(height*scale));

@@ -1,5 +1,6 @@
 #include "jerusalem/resources.hpp"
 #include "jerusalem/panorama.hpp"
+#include "jerusalem/aqc_animation.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -7,7 +8,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|render-panorama|map-panorama|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -45,6 +46,43 @@ int main(int argc,char** argv) {
       std::cout << "directory_complete=" << art.directory_complete << " available=" << art.entries.size() << " declared=" << art.declared_count << '\n';
       for (const auto& e:art.entries)
         std::cout << e.name << '\t' << e.offset << '\t' << e.stored_size << '\t' << e.auxiliary_size << '\t' << e.payload_available << '\n';
+    } else if (mode=="aqc-channels" || mode=="extract-aqc-channels") {
+      const AqcAnimation animation(std::move(data));
+      if (mode=="aqc-channels") {
+        for (std::size_t c=0;c<animation.channels().size();++c) {
+          const auto& channel=animation.channels()[c];
+          std::cout << "channel\t" << c << "\tframes\t" << channel.frames.size() << "\ttiming_value\t" << channel.timing_value << '\n';
+        }
+      } else {
+        if (argc!=4) throw ParseError("channel extraction requires a new output directory");
+        std::uint64_t total=0;
+        for (const auto& channel:animation.channels()) for (const auto& frame:channel.frames)
+          total+=std::uint64_t(frame.width)*frame.height*3;
+        if (total>512*1024*1024) throw ParseError("512 MiB decoded RGB export limit exceeded");
+        const std::filesystem::path root=argv[3];
+        if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
+        std::ofstream manifest(root/"manifest.tsv");
+        if (!manifest) throw ParseError("cannot create channel manifest");
+        manifest << "channel\tframe\tleft\ttop\twidth\theight\ttiming_value\n";
+        std::size_t count=0;
+        for (std::size_t c=0;c<animation.channels().size();++c) {
+          const auto& channel=animation.channels()[c];
+          for (std::size_t f=0;f<channel.frames.size();++f) {
+            const auto patch=animation.frame(c,f);
+            const auto name="channel-"+std::to_string(c)+"-frame-"+std::to_string(f)+".ppm";
+            std::ofstream out(root/name,std::ios::binary);
+            out << "P6\n" << patch.width << ' ' << patch.height << "\n255\n";
+            for (std::size_t i=0;i<patch.rgba.size();i+=4) out.write(reinterpret_cast<const char*>(patch.rgba.data()+i),3);
+            if (!out) throw ParseError("failed writing AQC patch");
+            const auto& rect=channel.frames[f];
+            manifest << c << '\t' << f << '\t' << rect.left << '\t' << rect.top << '\t'
+                     << rect.width << '\t' << rect.height << '\t' << channel.timing_value << '\n';
+            ++count;
+          }
+        }
+        if (!manifest) throw ParseError("failed writing channel manifest");
+        std::cout << count << " original patch frame(s) extracted; no game activation/timing implemented\n";
+      }
     } else if (mode=="decode-aqc" || mode=="render-panorama") {
       if (argc!=4 && !(mode=="render-panorama" && argc==7))
         throw ParseError("image conversion requires a new output directory; render-panorama optionally accepts YAW PITCH FOV");

@@ -170,3 +170,7 @@ Architecture references used for the independent app: [SDL Android integration](
 ## Native panorama camera
 
 [Milestone 5](panorama-milestone-5.md) establishes spherical/equirectangular mapping, a 640×448 logical camera viewport, 85° constructor FOV with 30°..87° limits, and row-stride semantics at AQC offset 0x34. It implements the native camera and SDL2 viewer, and compares 2701 source-coordinate samples against original code. AQC channel framing remains unresolved in one of 19 nodes; no animation playback is claimed.
+
+## Original AQC channel frames and inspection preview
+
+[Milestone 6](aqc-animation-milestone-6.md) implements bounded channel/frame parsing and native/Python patch decoding. All 639 frames across 79 channels in 18 nodes match original decoder indices and have identical native/Python pixels. A09S02N06R01 remains unsupported for channels. Android and SDL2 provide explicit single-channel inspection preview; game-driven activation, original timing, navigation and interactions remain future work. The user has confirmed the preceding 360 camera on Android.

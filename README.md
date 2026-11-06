@@ -9,7 +9,7 @@ An independent C++17 engine reimplementation with an SDL2 desktop panorama viewe
 - DAN level and interval parsing for the observed text dialect, with explicit `END` termination.
 - PE32 static inspection: sections, named/ordinal imports, relevant strings, SHA-256 identity. It never executes Windows code.
 - Ghidra loader tracing, WAC/WAS block/token inspection and native/Python PCM conversion for the verified mono/stereo dialect. Outputs match the original decoder routines on fifteen complete assets. See [audio decoding and validation](docs/wac-was-milestone-3.md). Android playback is connected and awaits device verification.
-- Native AQC static-image decoding and Python PNG/native PPM export, verified on all 19 Disc 1 nodes. See [AQC findings](docs/aqc-milestone-4.md). A verified spherical 360-degree camera now supports touch look-around, FOV zoom and a flat/360 toggle; see [camera evidence and SDL2 viewer](docs/panorama-milestone-5.md). Embedded animation channels remain unsupported.
+- Native AQC static-image decoding and Python PNG/native PPM export, verified on all 19 Disc 1 nodes. See [AQC findings](docs/aqc-milestone-4.md). A verified spherical 360-degree camera now supports touch look-around, FOV zoom and a flat/360 toggle; see [camera evidence and SDL2 viewer](docs/panorama-milestone-5.md). Original patch-frame decoding and explicit animation inspection now cover 18 nodes; see [channel evidence and preview controls](docs/aqc-animation-milestone-6.md). One A09 channel variant and original activation/timing remain unsupported.
 - Standard uncompressed 24/32-bit BMP decoding and integer PCM WAV inspection/playback. The WAV parser has processed all 30 standard WAV files on Disc 1, including an original menu sound.
 - Streaming ISO9660 extraction from the supplied MODE1/2352 disc image, with checked extents and dual-endian fields.
 - CUE validation for the supplied single MODE1/2352 data-track layout; conventional key/value INI parsing as a separate, explicitly selected dialect.
@@ -36,6 +36,8 @@ build-host/jinspect extract-media /path/to/resource /path/to/new-output-director
 python3 tools/pe_probe.py /path/to/Jerusalem.ex_
 python3 tools/aqc_decode.py /path/to/node.aqc /path/to/new-image.png
 build-host/jinspect decode-aqc /path/to/node.aqc /path/to/new-output-directory
+python3 tools/aqc_channels.py list /path/to/node.aqc
+build-host/jinspect extract-aqc-channels /path/to/node.aqc /path/to/new-frame-directory
 python3 tools/wac_layout.py /path/to/sound.wac
 python3 tools/wac_decode.py /path/to/sound.wac /path/to/new-sound.wav
 build-host/jinspect decode-audio /path/to/sound.was /path/to/new-output-directory
@@ -51,13 +53,13 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-Current host validation passes CMake/CTest with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds and 37 Python regression tests and 30 native panorama checks. CTest also runs the synthetic audio cases through the native decoder. Fifteen original WAC/WAS outputs match original decoder instructions byte for byte after documented container normalization. Standard WAV playback and original AQC static-image display have been confirmed on the user's device. New 360 camera controls and expanded synthetic emulator coverage await Actions/device results; APKs are built only in Actions. The app remains an asset/panorama inspector without scripted scene navigation or gameplay.
+Current host validation passes CMake/CTest with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds and 44 Python regression tests, 30 native panorama checks and 233 animation checks. CTest also runs the synthetic audio cases through the native decoder. Fifteen original WAC/WAS outputs match original decoder instructions byte for byte after documented container normalization. Standard WAV playback, original AQC static-image display and the 360 camera have been confirmed on the user's device. New animation-preview controls and expanded synthetic emulator coverage await Actions/device results; APKs are built only in Actions. The app remains an asset/panorama inspector without scripted scene navigation or gameplay.
 
 ## Roadmap
 
 1. Run the workflow in the intended GitHub repository, fix CI failures, and verify launch/import on an ARM64 device.
 2. Complete A01 and system AT3 archives have been extracted, and all 30 Disc 1 standard WAVs parse successfully. Verify original sound playback on device and reverse the Cinema image payloads.
-3. The native camera and SDL2 desktop viewer now use the traced spherical mapping. Verify camera controls/performance on device, then resolve AQC channel variants and activation/timing before adding ambient animation.
+3. The camera works on device. AQC patch frames now decode with explicit inspection preview; resolve the remaining channel variant and original activation/clock settings before integrating ambient scene animation.
 4. Reverse Cinema/CI2 frame tables. Expand the verified WAC/WAS audio corpus and check native compressed-audio playback on device.
 5. Trace scene activation, node transitions, hotspots, object IDs, dialogue triggers, and puzzle logic. Build the corresponding runtime only from established semantics.
 6. Design versioned native saves after the game state model is understood. Original `.ars` saves are currently unsupported.

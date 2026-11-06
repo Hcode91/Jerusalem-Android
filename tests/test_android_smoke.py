@@ -21,6 +21,18 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_preview_frame_evidence(self):
+        logs = b'AQC preview frame: channel=1 frame=0\nAQC preview frame: channel=1 frame=1\nOther diagnostic\n'
+        self.assertEqual(smoke.preview_states(logs), [(1, 0), (1, 1)])
+
+    def test_offscreen_preview_button_is_scrolled_into_view(self):
+        before = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,100][300,150]'})
+        after = ui({'text': 'PREVIEW ANIMATION', 'enabled': 'true', 'bounds': '[20,100][220,150]'})
+        with patch.object(smoke, 'current_ui', side_effect=[before, after]), patch.object(smoke, 'adb') as adb:
+            smoke.click_scrolling('Preview animation')
+            self.assertEqual(adb.call_args_list[0].args[:3], ('shell', 'input', 'swipe'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '120', '125'))
+
     def test_camera_state_evidence_ignores_other_diagnostics(self):
         logs = (b'Ready.\nPanorama frame: yaw=225.000 pitch=0.000 fov=85.000 size=480x640\n'
                 b'Other status\nPanorama frame: yaw=196.667 pitch=-1.500 fov=68.000 size=480x640\n')

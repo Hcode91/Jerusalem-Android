@@ -90,6 +90,7 @@ public class MainActivity extends SDLActivity {
             if (selectedAudioPath == null) showText("Audio", "Choose a supported PCM WAV, WAC or WAS from Browse assets first.");
             else playWhenFocused(selectedAudioPath);
         }));
+        buttons.addView(button("Preview animation", v -> nativeCommand(6)));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
         buttons.addView(button("Flat / 360", v -> nativeCommand(5)));
         buttons.addView(button("Zoom +", v -> nativeCommand(2)));
