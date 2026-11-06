@@ -103,6 +103,8 @@ public class MainActivity extends SDLActivity {
         navigation.setOnLongClickListener(v -> { if (!importing) chooseNavigationSource(); return true; });
         buttons.addView(navigation);
         buttons.addView(button("Inventory", v -> showText("Inventory", nativeInventory())));
+        buttons.addView(button("Save checkpoint", v -> { if (!importing) nativeCommand(9); }));
+        buttons.addView(button("Load checkpoint", v -> { if (!importing) nativeCommand(10); }));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
         buttons.addView(button("Flat / 360", v -> nativeCommand(5)));
         buttons.addView(button("Zoom +", v -> nativeCommand(2)));

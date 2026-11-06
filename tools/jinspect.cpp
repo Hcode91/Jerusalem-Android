@@ -2,6 +2,7 @@
 #include "jerusalem/panorama.hpp"
 #include "jerusalem/aqc_animation.hpp"
 #include "jerusalem/navigation.hpp"
+#include "jerusalem/checkpoint.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -9,7 +10,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|checkpoint FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -17,6 +18,15 @@ int main(int argc,char** argv) {
     const std::string mode=argv[1], text(data.begin(),data.end());
     if (mode=="inspect") std::cout << inspect(b) << '\n';
     else if (mode=="describe") std::cout << describe_resource(b,std::filesystem::path(argv[2]).filename().string()).details << '\n';
+    else if(mode=="checkpoint") {
+      if(argc!=5)throw ParseError("checkpoint FILE MODEL DATA_ROOT");
+      const auto input=read_file(argv[3]);const auto graph=parse_navigation(std::string(input.begin(),input.end()));
+      const auto assets=resolve_scene_assets(argv[4],graph);const auto cp=decode_checkpoint(b,graph,checkpoint_assets(graph,assets));
+      const auto state=restore_interactions(graph,cp);
+      std::cout << "Native A01 checkpoint: node=" << cp.node << " asset=" << scene_node(graph,cp.node).asset
+                << " yaw=" << cp.camera.yaw << " pitch=" << cp.camera.pitch << " fov=" << cp.camera.fov << '\n';
+      for(const auto id:state.inventory())std::cout << "item\t" << id << '\t' << collectible(graph,id).name << '\n';
+    }
     else if (mode=="extract-a01-navigation") {
       if (argc!=4) throw ParseError("navigation extraction requires a new output directory");
       const auto graph=extract_a01_navigation(b);

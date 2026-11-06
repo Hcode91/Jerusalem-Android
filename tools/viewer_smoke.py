@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 import subprocess
+import struct
+import zlib
 import sys
 import tempfile
 
@@ -36,6 +38,21 @@ def main():
         if result.returncode or 'Pickup preview ready' not in result.stdout or 'SDL2 panorama viewer completed' not in result.stdout:
             raise RuntimeError(f'SDL2 navigation launch failed: {result.stdout}\n{result.stderr}')
         print('PASS: traversal model loading and asset resolution with synthetic data')
+
+        checkpoint = Path(directory) / 'native-preview.jrs'
+        for action in ('save', 'load'):
+            result = subprocess.run([sys.argv[1], str(Path(directory) / 'SYNTH_A.aqc'),
+                                     '--navigation', str(model), '--checkpoint', str(checkpoint),
+                                     '--'+action+'-checkpoint', '--frames', '2'], env=env,
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode or ('Checkpoint '+('saved' if action == 'save' else 'loaded')) not in result.stdout:
+                raise RuntimeError(f'SDL2 checkpoint {action} failed: {result.stdout}\n{result.stderr}')
+        raw = checkpoint.read_bytes()
+        if (raw[:8] != b'JRNSAVE\0' or len(raw) != 68 or struct.unpack_from('<II', raw, 8) != (1, 1) or
+                struct.unpack_from('<II', raw, 32) != (1, 0) or struct.unpack_from('<ddd', raw, 40) != (225., 0., 85.) or
+                struct.unpack_from('<I', raw, len(raw)-4)[0] != zlib.crc32(raw[:-4])):
+            raise RuntimeError('Native checkpoint does not match its documented LE/IEEE754/CRC32 format')
+        print('PASS: native checkpoint saved and loaded by separate SDL2 viewer processes')
 
 
 if __name__ == '__main__':

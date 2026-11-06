@@ -190,3 +190,7 @@ Both uploaded split archives passed full ZIP CRC checks; the new Disc 1 matches 
 ## Original A01 pickup effects and presentations
 
 The user confirmed scene audio/lifecycle operation. [Milestone 9](a01-pickups-milestone-9.md) establishes fresh visibility, hotspots, channel bindings and normal pickup effects for three A01 objects. Native Android/SDL2 now compose their real single-frame patches, remove them on collection, track the original byte counter and unique milestone, and show a text inventory. Registrations/initialization and 768 isolated original effect traces match extraction. This remains a limited pickup preview: other initial presentations, item use, intro/story callbacks, dialogue, puzzles and saves are not implemented. New device testing is pending.
+
+## Independent native preview persistence
+
+The user confirmed the three supported A01 pickups and inventory. [Milestone 10](native-checkpoints-milestone-10.md) adds a new native checkpoint format for current node, camera and ordered pickups. It rebuilds verified state by replaying independent pickup effects and checks model/data compatibility, exact lengths, CRC32 and field bounds. This introduces no claim about original `.ARS` layout or unimplemented story state. Android and Linux SDL2 expose save/load; eight host groups pass, including 403 new checkpoint checks and private six-node state/pixel restoration. New Android runtime results remain pending.

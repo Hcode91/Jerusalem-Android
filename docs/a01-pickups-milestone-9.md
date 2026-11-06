@@ -85,3 +85,5 @@ Actions' synthetic Android test retains the scene-audio lifecycle assertions, th
 ## Next phone check
 
 After the next Actions build, long-press **A01 navigation** and select the original executable again to obtain V3 connections. Start at **A01S01N03R01**: browse/open that AQC, close its report, then enable A01 navigation. This also works if the previous preview ended at node 6, whose return is disabled. Look around/down for cyan ITEM markers and collect the three supported objects. Check Inventory, revisit another node and return, and confirm the items stay collected during that navigation session. Item use, palm-branch pickup, puzzles and saving are not supported yet. The new Android build and device result remain pending.
+
+Subsequent device result: the user confirmed collecting all three items and viewing them in inventory. [Milestone 10](native-checkpoints-milestone-10.md) adds separately tested native preview save/load; its new device result is pending.
