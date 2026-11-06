@@ -112,6 +112,7 @@ public class MainActivity extends SDLActivity {
                     String description = new String(result, Charset.forName("windows-1252"));
                     runOnUiThread(() -> {
                         nativeOpen(selected.getAbsolutePath());
+                        status.setText(selected.getName() + ": " + description.split("\\r?\\n", 2)[0]);
                         showText(selected.getName(), description);
                     });
                 } catch (Exception error) {

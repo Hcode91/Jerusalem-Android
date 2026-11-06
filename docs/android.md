@@ -30,6 +30,8 @@ Windows executables/DLLs are skipped. Individual files above 64 MiB, directory n
 
 No original data is bundled. No scene, dialogue playback, inventory, puzzle solving, original save/load, or proprietary animation rendering is available yet. A file bearing a `.bmp` or `.wav` name inside an AT3 archive may still have a proprietary payload encoding.
 
+The main native view and selectable Android report now use the same format-aware description. Localization files show English labels (or available languages if there are no English rows), DAN files show interval records, AT3 files list stored resource names, and other single-byte text files show their original contents with an explicit unparsed-format label. The native view shows the beginning of the report; use the scrollable Android report for the full contents. Binary resources without a decoder explain that limitation rather than showing a generic hex header. This presentation change does not implement AQC or Cinema image decoding. `jinspect describe FILE` produces the same report on the host without playing media.
+
 ## Required device smoke check
 
 This remains pending until an Actions-built APK is available:
