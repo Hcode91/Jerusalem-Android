@@ -227,7 +227,7 @@ public class MainActivity extends SDLActivity {
 
     private void chooseNavigationSource() {
         new AlertDialog.Builder(this).setTitle("A01 scene connections")
-                .setMessage("Choose Jerusalem.ex_ or Jerusalem.exe from your original disc. The app reads its A01 scene connections without running or retaining the Windows program.")
+                .setMessage("Choose Jerusalem.ex_ or Jerusalem.exe from your original disc. The app reads its A01 scene connections and ambient sound bindings without running or retaining the Windows program.")
                 .setPositiveButton("Choose file", (dialog, which) -> {
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                     intent.setType("*/*"); intent.addCategory(Intent.CATEGORY_OPENABLE);

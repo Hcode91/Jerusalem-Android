@@ -14,7 +14,8 @@ struct Exit {
   std::uint32_t cursor,event;
   Camera arrival;
 };
-struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; };
+struct SceneAmbient { std::uint32_t node,sound,volume; std::string stem; };
+struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; };
 SceneGraph extract_a01_navigation(Bytes executable);
 std::string write_navigation(const SceneGraph& graph);
 SceneGraph parse_navigation(const std::string& text);
@@ -23,6 +24,7 @@ const SceneNode& scene_node(const SceneGraph& graph,std::uint32_t id);
 bool exit_contains(const Exit& exit,std::int32_t x,std::int32_t y);
 std::optional<std::size_t> navigation_hit(const SceneGraph& graph,std::uint32_t source,std::int32_t x,std::int32_t y);
 std::map<std::uint32_t,std::filesystem::path> resolve_scene_assets(const std::filesystem::path& root,const SceneGraph& graph);
+std::filesystem::path resolve_ambient_asset(const std::filesystem::path& node,const std::string& stem);
 struct HotspotPoint { std::int32_t x,y; };
 HotspotPoint hotspot_point(const PanoramaGeometry& geometry,TexturePoint texture);
 // Normalized screen position of an angular hotspot centre; null when behind/offscreen.
