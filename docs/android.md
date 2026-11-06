@@ -28,7 +28,7 @@ File import is asynchronous. Each file is copied into a temporary file, checked 
 
 Windows executables/DLLs are skipped. Individual files above 64 MiB, directory nesting above 32 levels, more than 10,000 entries, and cumulative import above 2 GiB are unsupported. Known oversized files are skipped; unknown sizes that cross the limit stop the import with an explicit error. Names are treated as basenames and checked to stay under the private directory. The folder picker supports removable storage and document providers; source access must remain valid during the copy.
 
-No original data is bundled. A01 traversal and manual AQC animation inspection are available in the latest source. Dialogue playback, puzzle solving and original Windows save/load remain unavailable. Native pickups, inventory combinations and preview checkpoints are supported. A file bearing a `.bmp` or `.wav` name inside an AT3 archive may still have a proprietary payload encoding.
+No original data is bundled. A01 traversal and manual AQC animation inspection are available in the latest source. Full dialogue trees, puzzle solving and original Windows save/load remain unavailable. Limited original speech and a character offer are supported. Native pickups, inventory combinations and preview checkpoints are supported. A file bearing a `.bmp` or `.wav` name inside an AT3 archive may still have a proprietary payload encoding.
 
 The main native view and selectable Android report now use the same format-aware description. Localization files show English labels (or available languages if there are no English rows), DAN files show interval records, AT3 files list stored resource names, and other single-byte text files show their original contents with an explicit unparsed-format label. The native view shows the beginning of the report; use the scrollable Android report for the full contents. Binary resources without a decoder explain that limitation rather than showing a generic hex header. AQC static images now have a native decoder; supported animation channels have manual preview; Cinema images remain unsupported. `jinspect describe FILE` produces the same report on the host without playing media.
 
@@ -63,19 +63,19 @@ Animation inspection has now been confirmed on the user's phone. The next APK ad
 
 This is a traversal preview, not the original scripted opening or complete A01 gameplay. It does not automatically play ambient audio, dialogue or animations, apply story events, complete puzzles or save progression. All assets stay user-supplied. Missing/duplicate node files and unsupported executables produce explicit diagnostics. See [evidence, limits and tests](a01-navigation-milestone-7.md).
 
-The new Android build/emulator checks and real-phone traversal remain pending. Existing device confirmations establish earlier functionality only.
+A01 traversal has been confirmed on the phone. Newer features have separate validation gates.
 
 ## Original A01 scene audio (milestone 8)
 
 The user confirmed A01 traversal on Android. The latest source adds automatic music/wind/bees playback using original per-node bindings. After installing the next Actions APK, **long-press A01 navigation and select the original executable again** to refresh the older V1 model. Import A01's original SOUND directory as well as NODE. Music may be stored as TRACK02.WAS although the executable names it track02.wav; the resolver follows the original extension order.
 
-Shared tracks retain their playback position between nodes, volumes change with the original registrations, and node 6 removes the bees track. Stop audio stops scene streams; backgrounding pauses them; leaving traversal or browsing stops them. Missing sound data produces an explicit diagnostic while traversal stays available. Original fades, story/animation activation and preference master volumes remain unimplemented. See [milestone 8](a01-audio-milestone-8.md) for evidence, tests and limits. This new scene-audio build and phone result remain pending.
+Shared tracks retain their playback position between nodes, volumes change with the original registrations, and node 6 removes the bees track. Stop audio stops scene streams; backgrounding pauses them; leaving traversal or browsing stops them. Missing sound data produces an explicit diagnostic while traversal stays available. Original fades, story/animation activation and preference master volumes remain unimplemented. See [milestone 8](a01-audio-milestone-8.md) for evidence, tests and limits. Scene audio and background/resume have been confirmed on the phone.
 
 ## A01 pickup preview (milestone 9)
 
 Scene audio and background/resume have now been confirmed on the user's phone. The next APK adds three original pickups. **Long-press A01 navigation and select the original executable again** to refresh V3 connections. Browse/open A01S01N03R01.AQC, close its report, then enable A01 navigation and look around/down for cyan **ITEM** markers. Tapping one collects it, updates its image-channel state and adds it to **Inventory**. The harness, matting and stone are supported; original AOBJ.INI at the imported root supplies English labels, otherwise `mattress` is the executable fallback for matting.
 
-Move to another node and back to check that the collected items remain removed. State lasts within the navigation session; leaving navigation/reloading connections or closing the app resets it. Item use, combinations, palm-branch pickup, puzzles and saving remain unavailable. Original files remain user supplied. See [milestone 9](a01-pickups-milestone-9.md) for exact scope and verification. This new APK/device result is pending.
+Move to another node and back to check that the collected items remain removed. State lasts within the navigation session; leaving navigation/reloading connections or closing the app resets it. Subsequent milestones add combinations, native checkpoints, palm collection and limited item use; see milestone 12 below. Puzzles remain unavailable. Original files remain user supplied. See [milestone 9](a01-pickups-milestone-9.md) for exact scope and verification. The original three pickups have been confirmed on the phone.
 
 ## Native preview checkpoint (milestone 10)
 
@@ -86,4 +86,13 @@ There is one manually overwritten slot, stored privately outside the imported ga
 
 ## Inventory combination (milestone 11)
 
-Long-press **A01 navigation** and select the original executable again to refresh V4 connections. Collect the harness and stone (or load your old checkpoint), then use **Inventory → Combine items** and choose both ingredients in either order. The result is **Sling [10017]** when English AOBJ.INI is imported, otherwise **Loaded sling-like**. The ingredients disappear from the bag and remain removed from the scene. Matting stays in the inventory. Save/load now preserves the combination, including after app restart; compatible older pickup-only checkpoints migrate on load. Character item use remains unavailable. See [evidence and next phone check](a01-combinations-milestone-11.md). The new build/device result is pending.
+Long-press **A01 navigation** and select the original executable again to refresh V4 connections. Collect the harness and stone (or load your old checkpoint), then use **Inventory → Combine items** and choose both ingredients in either order. The result is **Sling [10017]** when English AOBJ.INI is imported, otherwise **Loaded sling-like**. The ingredients disappear from the bag and remain removed from the scene. Matting stays in the inventory. Save/load now preserves the combination, including after app restart; compatible older pickup-only checkpoints migrate on load. Milestone 12 adds the verified matting offer and one spoken response. See [evidence and next phone check](a01-combinations-milestone-11.md). The new build/device result is pending.
+
+
+## Palm, character use, subtitles and Cinema (milestone 12)
+
+The next APK adds a combined set of interactions. Refresh connections by long-pressing **A01 navigation** and selecting the original executable for V5 data. Collect the palm at A01S01N05R01; use **Inventory → Use item → Braided matting** on the nearby USE marker to give it to the character. The palm/offer order selects the corresponding original appearance. Native checkpoints retain the new state; compatible older checkpoints migrate with newly introduced character state starting fresh.
+
+At A01S01N04R01, using harness/stone/sling on its USE marker plays ADRI_DIA002 with timed subtitles. Import English `sound/eng` and `dia/eng` alongside the nodes. Other character conversations and the successor interaction remain unsupported.
+
+**Browse assets** can now play supported progressive CI2 movies from `a01/pla/eng`. Try A01S01_AN004.CI2 or A01S01_AN007C.CI2; **Replay movie** restarts, and **Stop audio** stops the preview too. Cinema audio is stereo when its encoded channel field is 1. Interlaced/unsupported variants report errors. This is movie preview, not scripted game progression. See [full evidence and testing sequence](a01-story-cinema-milestone-12.md). Android build/runtime results for this milestone are pending.

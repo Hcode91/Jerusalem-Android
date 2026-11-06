@@ -8,7 +8,9 @@ import zlib
 import sys
 import tempfile
 
-from android_smoke import synthetic_aqc, synthetic_animated_aqc
+from android_smoke import synthetic_aqc, synthetic_animated_aqc, synthetic_cinema
+from cinema_extract import extract as extract_cinema
+import wave
 
 
 def main():
@@ -79,6 +81,23 @@ def main():
         if 'inventory=1' not in launch(['--load-checkpoint']):
             raise RuntimeError('SDL2 combination result did not survive process restart')
         print('PASS: native inventory combination, checkpoint action log and independent-process restoration')
+
+        movie = Path(directory)/'generated.CI2';movie.write_bytes(synthetic_cinema())
+        result = subprocess.run([sys.argv[2], str(movie), '--exit-at-end'], env=env, capture_output=True, text=True, timeout=30)
+        if result.returncode or 'Cinema decoded: 3 frames' not in result.stdout:
+            raise RuntimeError(f'SDL2 cinema failed: {result.stdout}\n{result.stderr}')
+        print('PASS: SDL2 native CNM T/U/S decoding, timed presentation and stereo PCM queue')
+        converted = Path(directory)/'cinema-export'
+        native = Path(sys.argv[1]).parent/'jinspect'
+        if extract_cinema(movie, converted, native) != 3:
+            raise RuntimeError('native Cinema PNG extraction count differs')
+        if any(not frame.read_bytes().startswith(b'\x89PNG\r\n\x1a\n') for frame in converted.glob('*.png')):
+            raise RuntimeError('Cinema converter did not produce standard PNG files')
+        with wave.open(str(converted/'audio-0.wav'), 'rb') as sound:
+            if (sound.getnchannels(), sound.getsampwidth(), sound.getframerate(), sound.getnframes()) != (2, 2, 22050, 2646):
+                raise RuntimeError('Cinema WAV export lost stereo geometry or sample count')
+        print('PASS: native-backed PNG/WAV extraction with independently checked stereo PCM format')
+
 
 
 if __name__ == '__main__':

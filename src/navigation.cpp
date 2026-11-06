@@ -208,6 +208,53 @@ SceneGraph extract_a01_navigation(Bytes b) {
   Combination combination{combination_calls[0].arguments[0],combination_calls[1].arguments[0],combination_calls[2].arguments[0],""};
   for(const auto& call:packet(0x47e5af,0x47e5c7)) if(call.target==0x429700 && call.arguments.size()==4 && call.arguments[0]==combination.result && call.arguments[3]==1) combination.name=pe.label(call.arguments[1]);
   g.combinations.push_back(std::move(combination));
+  const auto palm_effect=packet(0x44ab55,0x44ab89);
+  if(palm_effect.size()!=4 || palm_effect[0].target!=0x42c1a0 || palm_effect[0].arguments.size()!=2 || palm_effect[1].target!=0x42c3a0 || palm_effect[1].arguments.size()!=1 ||
+     palm_effect[2].target!=0x42a9a0 || palm_effect[3].target!=0x429d70)throw ParseError("unsupported assignment pickup");
+  Collectible palm{};palm.id=palm_effect[1].arguments[0];palm.counter=palm_effect[0].arguments[0];palm.value=palm_effect[0].arguments[1];palm.assign=true;
+  for(const auto& call:packet(0x47e99f,0x47ea18)) {
+    const auto& a=call.arguments;if(a.empty() || a[0]!=palm.id)throw ParseError("inconsistent palm registration");
+    if(call.target==0x429700 && a.size()==4)palm.name=pe.label(a[1]);
+    else if(call.target==0x429c20 && a.size()==9 && a[6]==1){palm.node=a[1];palm.left=signed_word(a[2]);palm.top=signed_word(a[3]);palm.right=signed_word(a[4]);palm.bottom=signed_word(a[5]);palm.cursor=a[7];palm.event=a[8];}
+    else if(call.target==0x42a270 && a.size()==4 && a[1]==0)palm.channels.push_back({a[2],a[3]});
+    else if(call.target!=0x42a000 || a.size()!=1)throw ParseError("unsupported palm setup");
+  }
+  const auto fresh_palm=packet(0x44f095,0x44f0a3);
+  if(fresh_palm.size()!=1 || fresh_palm[0].target!=0x42a920 || fresh_palm[0].arguments!=std::vector<std::uint32_t>{palm.id,0} || initial.at(palm.counter)!=0)throw ParseError("unproven initial palm state");
+  if(palm_effect[2].arguments!=std::vector<std::uint32_t>{palm.id,0} || palm_effect[3].arguments!=std::vector<std::uint32_t>{palm.id})throw ParseError("inconsistent palm effect targets");
+  g.items.push_back(palm);
+  for(const auto address:{0x44ab99U,0x44abc5U,0x44abf5U}) {
+    const auto calls=packet(address,address+28);
+    if(calls.size()!=2 || calls[0].target!=0x42a9a0 || calls[1].target!=0x42a920 || calls[0].arguments.size()!=2 || calls[1].arguments.size()!=2 || calls[0].arguments[0]!=calls[1].arguments[0])throw ParseError("unsupported pickup presentation switch");
+    g.pickup_switches.push_back({palm.id,pe.at(0x44ab8a,4).u32(0),static_cast<std::uint32_t>(g.pickup_switches.size()+1),calls[0].arguments[0],calls[0].arguments[1],calls[1].arguments[1]});
+  }
+  std::map<std::pair<std::uint32_t,std::uint32_t>,Presentation> presentations;
+  for(const auto& call:packet(0x47e6d2,0x47e99f))if(call.target==0x42a270) {
+    const auto& a=call.arguments;if(a.size()!=4)throw ParseError("unsupported character channel");
+    auto& presentation=presentations[{a[0],a[1]}];presentation.object=a[0];presentation.index=a[1];presentation.channels.push_back({a[2],a[3]});
+  }
+  for(auto& entry:presentations)g.presentations.push_back(std::move(entry.second));
+  for(const auto& range:{std::pair{0x47e450U,0x47e493U},std::pair{0x47ea18U,0x47ea5bU},std::pair{0x47e6d2U,0x47e715U}})
+    for(const auto& call:packet(range.first,range.second))if(call.target==0x429c20) {
+      const auto& a=call.arguments;if(a.size()!=9 || a[6]>1)throw ParseError("unsupported item-use target");
+      g.targets.push_back({a[0],a[1],signed_word(a[2]),signed_word(a[3]),signed_word(a[4]),signed_word(a[5]),a[7],a[8],a[6]!=0,"Character hotspot "+std::to_string(a[0])});
+    }
+  if(g.targets.size()!=3)throw ParseError("incomplete interaction target setup");
+  const auto offer=packet(0x44a886,0x44a8a0),enable=packet(0x44a8be,0x44a8ca);
+  if(offer.size()!=2 || offer[0].target!=0x42c1a0 || offer[0].arguments.size()!=2 || offer[1].target!=0x42c460 || offer[1].arguments.size()!=1 || enable.size()!=1 || enable[0].target!=0x429d50 || enable[0].arguments.size()!=1)throw ParseError("unsupported matting offer");
+  g.uses.push_back({1,g.targets[1].id,offer[1].arguments[0],offer[0].arguments[0],offer[0].arguments[1],enable[0].arguments[0],pe.at(0x44a8a1,4).u32(0),pe.at(0x44a8b5,4).u32(0),1,0,0,true});
+  // Read the dialogue registration's constant suffix; dynamic load configuration is not interpreted.
+  const auto speech=pe.at(0x47fab3,19);
+  if(speech.u8(0)!=0x68 || speech.u8(5)!=0x6a || speech.u8(6)!=5 || speech.u8(7)!=0x68 || !speech.is(12,std::string("\x8b\xce\xe8",3)) || std::int64_t(0x47fab3)+19+speech.i32(15)!=0x42c8d0)throw ParseError("unsupported speech registration");
+  auto stem=pe.name(speech.u32(1),true);if(stem.size()<5 || stem.substr(stem.size()-4)!=".WAC")throw ParseError("unsupported dialogue sound suffix");stem.resize(stem.size()-4);
+  g.dialogues.push_back({speech.u32(8),g.nodes.front().asset.substr(0,3),stem});
+  const auto response=packet(0x44a690,0x44a69e);
+  if(response.size()!=1 || response[0].target!=0x42ccd0 || response[0].arguments!=std::vector<std::uint32_t>{g.dialogues.front().id,1})throw ParseError("unsupported item response");
+  for(const auto item:{g.combinations.front().first,g.combinations.front().second,g.combinations.front().result})g.uses.push_back({static_cast<std::uint32_t>(g.uses.size()+1),g.targets.front().id,item,0,0,0,0,0,0,0,g.dialogues.front().id,false});
+  for(const auto& r:g.pickup_switches)if(initial.at(r.variable)!=0)throw ParseError("unproven initial character state");
+  const auto hidden=packet(0x44f0db,0x44f0ff);if(hidden.size()!=3)throw ParseError("incomplete initial hidden character setup");
+  for(const auto& call:hidden)if(call.target!=0x42ab20 || call.arguments.size()!=1 || std::none_of(g.presentations.begin(),g.presentations.end(),[&](const Presentation& p){return p.object==call.arguments[0];}))throw ParseError("unsupported initial character visibility");
+  std::sort(g.targets.begin(),g.targets.end(),[](const InteractionTarget& a,const InteractionTarget& b){return a.id<b.id;});
   validate_navigation(g);
   return g;
 }
@@ -216,6 +263,12 @@ const SceneNode& scene_node(const SceneGraph& g,std::uint32_t id) {
   const auto node=std::find_if(g.nodes.begin(),g.nodes.end(),[&](const SceneNode& n){return n.id==id;});
   if (node==g.nodes.end()) throw ParseError("scene ID does not exist");
   return *node;
+}
+bool has_story_rules(const SceneGraph& g) {return !g.targets.empty() || !g.presentations.empty() || !g.pickup_switches.empty() || !g.uses.empty() || !g.dialogues.empty() || std::any_of(g.items.begin(),g.items.end(),[](const Collectible& c){return c.assign;});}
+SceneGraph legacy_navigation(SceneGraph g,unsigned revision) {
+  if(revision<3){g.items.erase(std::remove_if(g.items.begin(),g.items.end(),[](const Collectible& c){return c.assign;}),g.items.end());g.targets.clear();g.presentations.clear();g.pickup_switches.clear();g.uses.clear();g.dialogues.clear();}
+  if(revision<2)g.combinations.clear();
+  return g;
 }
 void validate_navigation(const SceneGraph& g) {
   if (g.nodes.empty() || g.nodes.size()>64 || g.exits.size()>512 || g.ambient.size()>192 || g.items.size()>16) throw ParseError("invalid navigation record counts");
@@ -264,6 +317,22 @@ void validate_navigation(const SceneGraph& g) {
        !results.insert(c.result).second || !pairs.insert(std::minmax(c.first,c.second)).second || c.name.empty() || c.name.size()>95)throw ParseError("invalid inventory combination");
     for(unsigned char ch:c.name)if(ch<32 || ch>126)throw ParseError("unsupported combination label encoding");
   }
+  const auto printable=[](const std::string& text){return !text.empty() && text.size()<96 && std::all_of(text.begin(),text.end(),[](unsigned char c){return c>=32 && c<=126;});};
+  if(g.targets.size()>32 || g.presentations.size()>32 || g.pickup_switches.size()>32 || g.uses.size()>32 || g.dialogues.size()>32)throw ParseError("too many interaction rules");
+  std::set<std::pair<std::uint32_t,std::uint32_t>> presentation_ids;
+  for(const auto& p:g.presentations){if(!p.object || p.index>15 || p.channels.empty() || p.channels.size()>64 || !presentation_ids.insert({p.object,p.index}).second)throw ParseError("invalid static presentation");std::set<std::pair<std::uint32_t,std::uint32_t>> seen;for(const auto& b:p.channels)if(b.channel>=scene_node(g,b.node).channels || !seen.insert({b.node,b.channel}).second)throw ParseError("invalid presentation binding");}
+  std::set<std::uint32_t> targets,dialogues,uses;
+  for(const auto& t:g.targets){scene_node(g,t.node);if(!t.id || t.id>0x3fffffffU || item_ids.count(t.id) || !targets.insert(t.id).second || t.event!=0 || t.cursor>0x7fffffffU || !printable(t.name) || t.left<0 || t.left>=t.right || t.right>3600 || t.top< -900 || t.top>=t.bottom || t.bottom>900)throw ParseError("invalid interaction target");}
+  for(const auto& d:g.dialogues){if(!d.id || !dialogues.insert(d.id).second || d.area.size()!=3 || d.area[0]!='A' || d.area[1]<'0' || d.area[1]>'9' || d.area[2]<'0' || d.area[2]>'9' || d.stem.empty() || d.stem.size()>63)throw ParseError("invalid dialogue resource");for(unsigned char c:d.stem)if(!((c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'))throw ParseError("unsafe dialogue stem");}
+  std::set<std::pair<std::uint32_t,std::uint32_t>> switch_keys;
+  for(const auto& r:g.pickup_switches)if(!item_ids.count(r.item) || !r.variable || r.variable>0x3fffffffU || r.value>255 || !switch_keys.insert({r.item,r.value}).second || !presentation_ids.count({r.object,r.hide}) || !presentation_ids.count({r.object,r.show}))throw ParseError("invalid pickup presentation switch");
+  std::set<std::pair<std::uint32_t,std::uint32_t>> use_pairs;
+  for(const auto& r:g.uses){
+    if(!r.id || r.id>0x3fffffffU || !uses.insert(r.id).second || !targets.count(r.target) || (!item_ids.count(r.item) && !results.count(r.item)) || !use_pairs.insert({r.target,r.item}).second || r.value>255 || r.variable>0x3fffffffU || r.choice>0x3fffffffU || (r.enable && !targets.count(r.enable)) || (r.dialogue && !dialogues.count(r.dialogue)))throw ParseError("invalid item-use rule");
+    if(r.consume){if(!r.variable || !r.object || !r.choice || r.dialogue || !item_ids.count(r.item) || !presentation_ids.count({r.object,r.zero}) || !presentation_ids.count({r.object,r.nonzero}))throw ParseError("unsupported consuming use effect");}
+    else if(!r.dialogue || r.variable || r.value || r.object || r.choice || r.enable || r.zero || r.nonzero)throw ParseError("unsupported response-only use effect");
+  }
+  if(has_story_rules(g)){for(const auto& item:g.items)if(item.id>0x3fffffffU || (item.assign && (item.value>255 || item.milestone)) || (!item.assign && item.value))throw ParseError("invalid assignment pickup");for(const auto& c:g.combinations)if(c.result>0x3fffffffU)throw ParseError("combination result exceeds action ID range");}
   for (const auto& e:g.exits) {
     scene_node(g,e.source); if (!e.puzzle) scene_node(g,e.target);
     if (!e.target || e.target>0x7fffffffU || e.cursor>0x7fffffffU || e.event>0x7fffffffU ||
@@ -278,7 +347,7 @@ void validate_navigation(const SceneGraph& g) {
 
 std::string write_navigation(const SceneGraph& g) {
   validate_navigation(g);
-  std::ostringstream out; out.imbue(std::locale::classic()); out << (!g.combinations.empty()?"JERUSALEM_A01_NAV_V4\n":!g.items.empty()?"JERUSALEM_A01_NAV_V3\n":g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
+  std::ostringstream out; out.imbue(std::locale::classic()); out << (has_story_rules(g)?"JERUSALEM_A01_NAV_V5\n":!g.combinations.empty()?"JERUSALEM_A01_NAV_V4\n":!g.items.empty()?"JERUSALEM_A01_NAV_V3\n":g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
   for (const auto& n:g.nodes) out << "node " << n.id << ' ' << n.asset << ' ' << n.channels << '\n';
   for (const auto& e:g.exits)
     out << "exit " << e.source << ' ' << e.slot << ' ' << e.target << ' ' << e.puzzle << ' ' << e.enabled << ' '
@@ -291,13 +360,19 @@ std::string write_navigation(const SceneGraph& g) {
     for(const auto& b:item.channels) out << "item-channel " << item.id << ' ' << b.node << ' ' << b.channel << '\n';
   }
   for(const auto& c:g.combinations)out << "combine " << c.first << ' ' << c.second << ' ' << c.result << ' ' << std::quoted(c.name) << '\n';
+  for(const auto& item:g.items)if(item.assign)out << "pickup-set " << item.id << ' ' << item.value << '\n';
+  for(const auto& p:g.presentations)for(const auto& b:p.channels)out << "presentation " << p.object << ' ' << p.index << ' ' << b.node << ' ' << b.channel << '\n';
+  for(const auto& r:g.pickup_switches)out << "pickup-switch " << r.item << ' ' << r.variable << ' ' << r.value << ' ' << r.object << ' ' << r.hide << ' ' << r.show << '\n';
+  for(const auto& t:g.targets)out << "target " << t.id << ' ' << t.node << ' ' << t.left << ' ' << t.top << ' ' << t.right << ' ' << t.bottom << ' ' << t.cursor << ' ' << t.event << ' ' << t.enabled << ' ' << std::quoted(t.name) << '\n';
+  for(const auto& r:g.uses)out << "use " << r.id << ' ' << r.target << ' ' << r.item << ' ' << r.variable << ' ' << r.value << ' ' << r.enable << ' ' << r.choice << ' ' << r.object << ' ' << r.zero << ' ' << r.nonzero << ' ' << r.dialogue << ' ' << r.consume << '\n';
+  for(const auto& d:g.dialogues)out << "dialogue " << d.id << ' ' << d.area << ' ' << d.stem << '\n';
   return out.str();
 }
 SceneGraph parse_navigation(const std::string& text) {
   if (text.size()>128*1024) throw ParseError("navigation model exceeds 128 KiB limit");
   std::istringstream lines(text); std::string line;
-  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2" && line!="JERUSALEM_A01_NAV_V3" && line!="JERUSALEM_A01_NAV_V4")) throw ParseError("not a native A01 navigation model");
-  const bool combinations=line=="JERUSALEM_A01_NAV_V4",items=combinations || line=="JERUSALEM_A01_NAV_V3",audio=items || line=="JERUSALEM_A01_NAV_V2";
+  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2" && line!="JERUSALEM_A01_NAV_V3" && line!="JERUSALEM_A01_NAV_V4" && line!="JERUSALEM_A01_NAV_V5")) throw ParseError("not a native A01 navigation model");
+  const bool story=line=="JERUSALEM_A01_NAV_V5",combinations=story || line=="JERUSALEM_A01_NAV_V4",items=combinations || line=="JERUSALEM_A01_NAV_V3",audio=items || line=="JERUSALEM_A01_NAV_V2";
   SceneGraph g;
   while (std::getline(lines,line)) {
     if (line.empty()) continue;
@@ -317,6 +392,21 @@ SceneGraph parse_navigation(const std::string& text) {
       if (!(row>>a.node>>a.sound>>a.volume>>a.stem) || (row>>extra) || g.ambient.size()>=192)
         throw ParseError("invalid ambient model row");
       g.ambient.push_back(std::move(a));
+    } else if(kind=="pickup-set" && story) {
+      std::uint32_t id,value;if(!(row>>id>>value) || (row>>extra))throw ParseError("invalid assignment pickup row");
+      auto found=std::find_if(g.items.begin(),g.items.end(),[&](const Collectible& c){return c.id==id;});if(found==g.items.end() || found->assign)throw ParseError("unknown/repeated assignment pickup");found->assign=true;found->value=value;
+    } else if(kind=="presentation" && story) {
+      std::uint32_t object,index;ItemChannel b;if(!(row>>object>>index>>b.node>>b.channel) || (row>>extra))throw ParseError("invalid presentation row");
+      auto found=std::find_if(g.presentations.begin(),g.presentations.end(),[&](const Presentation& p){return p.object==object && p.index==index;});
+      if(found==g.presentations.end()){if(g.presentations.size()>=32)throw ParseError("presentation count limit");g.presentations.push_back({object,index,{}});found=std::prev(g.presentations.end());}if(found->channels.size()>=64)throw ParseError("presentation binding limit");found->channels.push_back(b);
+    } else if(kind=="pickup-switch" && story) {
+      PickupSwitch r{};if(!(row>>r.item>>r.variable>>r.value>>r.object>>r.hide>>r.show) || (row>>extra) || g.pickup_switches.size()>=32)throw ParseError("invalid pickup switch row");g.pickup_switches.push_back(r);
+    } else if(kind=="target" && story) {
+      InteractionTarget t{};unsigned enabled;if(!(row>>t.id>>t.node>>t.left>>t.top>>t.right>>t.bottom>>t.cursor>>t.event>>enabled>>std::quoted(t.name)) || (row>>extra) || enabled>1 || g.targets.size()>=32)throw ParseError("invalid target row");t.enabled=enabled!=0;g.targets.push_back(t);
+    } else if(kind=="use" && story) {
+      ItemUse r{};unsigned consume;if(!(row>>r.id>>r.target>>r.item>>r.variable>>r.value>>r.enable>>r.choice>>r.object>>r.zero>>r.nonzero>>r.dialogue>>consume) || (row>>extra) || consume>1 || g.uses.size()>=32)throw ParseError("invalid use row");r.consume=consume!=0;g.uses.push_back(r);
+    } else if(kind=="dialogue" && story) {
+      DialogueResource d{};if(!(row>>d.id>>d.area>>d.stem) || (row>>extra) || g.dialogues.size()>=32)throw ParseError("invalid dialogue row");g.dialogues.push_back(d);
     } else if(kind=="combine" && combinations) {
       Combination c{};
       if(!(row>>c.first>>c.second>>c.result>>std::quoted(c.name)) || (row>>extra) || g.combinations.size()>=16)throw ParseError("invalid combination row");

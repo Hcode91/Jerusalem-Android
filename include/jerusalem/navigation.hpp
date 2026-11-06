@@ -22,9 +22,24 @@ struct Collectible {
   std::uint32_t cursor,event,counter,milestone;
   std::string name;
   std::vector<ItemChannel> channels;
+  bool assign=false;
+  std::uint32_t value=0;
 };
 struct Combination { std::uint32_t first,second,result; std::string name; };
-struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; std::vector<Collectible> items; std::vector<Combination> combinations; };
+struct Presentation { std::uint32_t object,index; std::vector<ItemChannel> channels; };
+struct PickupSwitch { std::uint32_t item,variable,value,object,hide,show; };
+struct InteractionTarget {
+  std::uint32_t id,node; std::int32_t left,top,right,bottom;
+  std::uint32_t cursor,event; bool enabled; std::string name;
+};
+struct ItemUse {
+  std::uint32_t id,target,item,variable,value,enable,choice,object,zero,nonzero,dialogue;
+  bool consume;
+};
+struct DialogueResource { std::uint32_t id; std::string area,stem; };
+struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; std::vector<Collectible> items; std::vector<Combination> combinations; std::vector<Presentation> presentations; std::vector<PickupSwitch> pickup_switches; std::vector<InteractionTarget> targets; std::vector<ItemUse> uses; std::vector<DialogueResource> dialogues; };
+bool has_story_rules(const SceneGraph& graph);
+SceneGraph legacy_navigation(SceneGraph graph,unsigned revision);
 SceneGraph extract_a01_navigation(Bytes executable);
 std::string write_navigation(const SceneGraph& graph);
 SceneGraph parse_navigation(const std::string& text);

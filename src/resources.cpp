@@ -1,4 +1,6 @@
 #include "jerusalem/resources.hpp"
+#include "jerusalem/cinema.hpp"
+#include "jerusalem/dialogue.hpp"
 #include "jerusalem/aqc_animation.hpp"
 #include <algorithm>
 #include <fstream>
@@ -263,6 +265,11 @@ std::string inspect(Bytes b) {
 }
 
 ResourceDescription describe_resource(Bytes b, const std::string& filename) {
+  if(b.size()>=200 && b.is(0,std::string("CNM UNR\0",8))) {
+    const CinemaDecoder decoder(std::vector<std::uint8_t>(b.data(),b.data()+b.size()));const auto& info=decoder.info();
+    return {ResourceKind::Cinema,"CNM cinema: "+std::to_string(info.width)+"x"+std::to_string(info.height)+", "+std::to_string(info.frames)+" frames", "Progressive CNM decoding is available. Interlaced variants are rejected. Movie playback uses the DLL's verified header timing; the inspector does not advance game story callbacks."};
+  }
+
   constexpr std::size_t display_limit=128*1024;
   auto result=[&](ResourceKind kind,std::string summary,std::string details) {
     if (details.size()>display_limit) { details.resize(display_limit); details+="\n[Display truncated]"; }
@@ -341,6 +348,11 @@ ResourceDescription describe_resource(Bytes b, const std::string& filename) {
   }
   if (text_file) {
     const std::string text(reinterpret_cast<const char*>(b.data()),b.size());
+    auto suffix=filename;for(auto& c:suffix)if(c>='a'&&c<='z')c=char(c-'a'+'A');
+    if(suffix.size()>=4 && suffix.substr(suffix.size()-4)==".DIA") {
+      const auto captions=parse_dia(text);std::ostringstream details;for(const auto& cue:captions.cues)details << cue.time_ms << " ms: " << cue.text << '\n';details << captions.end_ms << " ms: END\n";
+      return result(ResourceKind::Subtitles,"DIA subtitles: "+std::to_string(captions.cues.size())+" cues",details.str());
+    }
     try {
       const auto table=parse_localized(text);
       const auto summary="Localization: "+std::to_string(table.size())+" language records. English labels shown below.";

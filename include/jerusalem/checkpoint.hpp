@@ -5,7 +5,8 @@ namespace jerusalem {
 struct Checkpoint {
   std::uint32_t node;
   Camera camera;
-  // Ordered action log: pickup ID, or bit31 | combination result ID (revision 2).
+  // Ordered action log: pickup ID, bit31 | combination result ID (revision 2),
+  // or bit30 | consuming item-use rule ID (revision 3).
   // Retains the revision-1 field name for source compatibility.
   std::vector<std::uint32_t> inventory;
 };
