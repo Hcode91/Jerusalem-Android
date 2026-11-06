@@ -1,4 +1,5 @@
 #include "jerusalem/resources.hpp"
+#include "jerusalem/panorama.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -7,6 +8,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 
 namespace {
@@ -94,20 +96,43 @@ class Renderer {
   SDL_Window* window_=nullptr;
   SDL_Renderer* renderer_=nullptr;
   SDL_Texture* texture_=nullptr;
+  SDL_Texture* camera_texture_=nullptr;
+  jerusalem::Bitmap panorama_{};
+  jerusalem::PanoramaGeometry geometry_{};
+  jerusalem::Camera camera_{};
+  bool camera_mode_=false, camera_dirty_=false;
+  int camera_width_=0,camera_height_=0;
   int width_=0,height_=0;
   float zoom_=1,pan_x_=0,pan_y_=0;
   std::string preview_;
  public:
   ~Renderer() {
+    if (camera_texture_) SDL_DestroyTexture(camera_texture_);
     if (texture_) SDL_DestroyTexture(texture_);
     if (renderer_) SDL_DestroyRenderer(renderer_);
     if (window_) SDL_DestroyWindow(window_);
   }
   bool init() { return SDL_CreateWindowAndRenderer("Jerusalem Asset Inspector",1280,720,SDL_WINDOW_RESIZABLE,&window_,&renderer_); }
-  void clear_image() { if (texture_) SDL_DestroyTexture(texture_); texture_=nullptr; }
-  void fit() { zoom_=1; pan_x_=pan_y_=0; }
-  void zoom(float factor) { zoom_=std::clamp(zoom_*factor,0.25f,8.0f); }
-  void pan(float x,float y) { pan_x_+=x; pan_y_+=y; }
+  void clear_image() {
+    if (texture_) SDL_DestroyTexture(texture_);
+    if (camera_texture_) SDL_DestroyTexture(camera_texture_);
+    texture_=camera_texture_=nullptr; panorama_={}; camera_mode_=false;
+    camera_width_=camera_height_=0;
+  }
+  void fit() { zoom_=1; pan_x_=pan_y_=0; camera_={}; camera_dirty_=true; }
+  void zoom(float factor) {
+    if (camera_mode_) { camera_.fov=std::clamp(camera_.fov/factor,30.0,87.0); camera_dirty_=true; }
+    else zoom_=std::clamp(zoom_*factor,0.25f,8.0f);
+  }
+  void pan(float x,float y) {
+    if (camera_mode_) { camera_.yaw-=x*camera_.fov; camera_.pitch-=y*camera_.fov; camera_dirty_=true; }
+    else { pan_x_+=x; pan_y_+=y; }
+  }
+  void toggle_camera() {
+    if (panorama_.rgba.empty()) { report("Choose an AQC panorama before switching views."); return; }
+    camera_mode_=!camera_mode_; camera_dirty_=true;
+    report(camera_mode_ ? "360 panorama view. Drag to look around; Zoom changes the field of view." : "Flat image view. Drag to pan; use Fit image / Zoom.");
+  }
   void preview(const std::string& text) {
     preview_=text.substr(0,8192);
     // SDL's debug font is ASCII. The selectable Android report retains original bytes.
@@ -122,14 +147,39 @@ class Renderer {
     }
     width_=static_cast<int>(b.width); height_=static_cast<int>(b.height); fit();
   }
+  void panorama(jerusalem::Bitmap image,const jerusalem::PanoramaGeometry& geometry) {
+    bitmap(image);
+    panorama_=std::move(image); geometry_=geometry; camera_mode_=true; camera_dirty_=true;
+  }
   void draw(const std::string& message) {
     int w=0,h=0; SDL_GetRenderOutputSize(renderer_,&w,&h);
     SDL_SetRenderDrawColor(renderer_,17,23,30,255); SDL_RenderClear(renderer_);
     if (texture_ && w>0 && h>220) {
-      const float scale=std::min(float(w)/float(width_),float(h-220)/float(height_))*zoom_;
-      SDL_FRect dst{(float(w)-float(width_)*scale)/2+pan_x_*float(w),
-                    64+(float(h-220)-float(height_)*scale)/2+pan_y_*float(h),float(width_)*scale,float(height_)*scale};
-      SDL_RenderTexture(renderer_,texture_,nullptr,&dst);
+      if (camera_mode_) {
+        const double scale=std::min(1.0,640.0/std::max(w,h-220));
+        const int rw=std::max(1,static_cast<int>(w*scale)),rh=std::max(1,static_cast<int>((h-220)*scale));
+        if (rw!=camera_width_ || rh!=camera_height_) {
+          if (camera_texture_) SDL_DestroyTexture(camera_texture_);
+          camera_texture_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,rw,rh);
+          if (!camera_texture_) throw jerusalem::ParseError(std::string("Panorama texture: ")+SDL_GetError());
+          camera_width_=rw; camera_height_=rh; camera_dirty_=true;
+        }
+        if (camera_dirty_) {
+          camera_=jerusalem::constrain_camera(geometry_,camera_,rw,rh);
+          const auto frame=jerusalem::render_panorama(panorama_,geometry_,camera_,rw,rh);
+          if (!SDL_UpdateTexture(camera_texture_,nullptr,frame.rgba.data(),rw*4))
+            throw jerusalem::ParseError(std::string("Panorama upload: ")+SDL_GetError());
+          camera_dirty_=false;
+          __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Panorama frame: yaw=%.3f pitch=%.3f fov=%.3f size=%dx%d",camera_.yaw,camera_.pitch,camera_.fov,rw,rh);
+        }
+        SDL_FRect dst{0,64,float(w),float(h-220)};
+        SDL_RenderTexture(renderer_,camera_texture_,nullptr,&dst);
+      } else {
+        const float scale=std::min(float(w)/float(width_),float(h-220)/float(height_))*zoom_;
+        SDL_FRect dst{(float(w)-float(width_)*scale)/2+pan_x_*float(w),
+                      64+(float(h-220)-float(height_)*scale)/2+pan_y_*float(h),float(width_)*scale,float(height_)*scale};
+        SDL_RenderTexture(renderer_,texture_,nullptr,&dst);
+      }
     }
     SDL_SetRenderDrawColor(renderer_,230,235,240,255);
     SDL_RenderDebugText(renderer_,12,12,"JERUSALEM / NATIVE ASSET INSPECTOR");
@@ -161,7 +211,14 @@ class InspectionScene {
       auto data=jerusalem::read_file(path); jerusalem::Bytes b(data);
       const auto description=jerusalem::describe_resource(b,path.filename().string());
       if (description.kind==jerusalem::ResourceKind::Bitmap) renderer_.bitmap(jerusalem::decode_bitmap(b));
-      else if (description.kind==jerusalem::ResourceKind::AqcImage) renderer_.bitmap(jerusalem::decode_aqc(b));
+      else if (description.kind==jerusalem::ResourceKind::AqcImage) {
+        auto image=jerusalem::decode_aqc(b);
+        std::optional<jerusalem::PanoramaGeometry> geometry;
+        try { geometry=jerusalem::panorama_geometry(b); }
+        catch (const jerusalem::ParseError&) { /* The static image remains supported. */ }
+        if (geometry) renderer_.panorama(std::move(image),*geometry);
+        else renderer_.bitmap(image);
+      }
       else if (description.kind==jerusalem::ResourceKind::Wave || description.kind==jerusalem::ResourceKind::CompressedAudio)
         audio_.play(b,path.filename().string());
       renderer_.preview(description.details);
@@ -203,7 +260,7 @@ Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,js
 }
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeCommand(JNIEnv*,jclass,jint command) {
-  if (command<1 || command>4) return;
+  if (command<1 || command>5) return;
   std::lock_guard<std::mutex> guard(bridge_mutex); commands|=1U<<command;
 }
 extern "C" JNIEXPORT jstring JNICALL
@@ -248,8 +305,12 @@ int main(int,char**) {
       if (action&(1U<<2)) renderer.zoom(1.25f);
       if (action&(1U<<3)) renderer.zoom(0.8f);
       if (action&(1U<<4)) { audio.stop(); report("Audio stopped."); }
+      if (action&(1U<<5)) renderer.toggle_camera();
       if (!background) audio.update();
-      if (!background) renderer.draw(message);
+      if (!background) {
+        try { renderer.draw(message); }
+        catch (const std::exception& e) { renderer.clear_image(); report(std::string("Render error: ")+e.what()); }
+      }
       SDL_Delay(background?100:16);
     }
   }

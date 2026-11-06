@@ -14,8 +14,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - name: Install SDL2 desktop viewer dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Configure host parser tests with sanitizers
-        run: cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug -DJERUSALEM_SANITIZE=ON
+        run: cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug -DJERUSALEM_SANITIZE=ON -DJERUSALEM_DESKTOP_VIEWER=ON
       - name: Build host tools and tests
         run: cmake --build build-host --parallel 2
       - name: Run regression and malformed-input tests

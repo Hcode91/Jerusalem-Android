@@ -91,6 +91,7 @@ public class MainActivity extends SDLActivity {
             else playWhenFocused(selectedAudioPath);
         }));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
+        buttons.addView(button("Flat / 360", v -> nativeCommand(5)));
         buttons.addView(button("Zoom +", v -> nativeCommand(2)));
         buttons.addView(button("Zoom −", v -> nativeCommand(3)));
         buttons.addView(button("Stop audio", v -> nativeCommand(4)));

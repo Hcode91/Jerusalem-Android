@@ -1,4 +1,5 @@
 #include "jerusalem/resources.hpp"
+#include "jerusalem/panorama.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -6,7 +7,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|render-panorama|map-panorama|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -14,6 +15,21 @@ int main(int argc,char** argv) {
     const std::string mode=argv[1], text(data.begin(),data.end());
     if (mode=="inspect") std::cout << inspect(b) << '\n';
     else if (mode=="describe") std::cout << describe_resource(b,std::filesystem::path(argv[2]).filename().string()).details << '\n';
+    else if (mode=="map-panorama") {
+      if (argc!=10) throw ParseError("map-panorama FILE YAW PITCH FOV WIDTH HEIGHT COLUMNS ROWS");
+      const auto geometry=panorama_geometry(b);
+      const auto width=std::stoul(argv[6]),height=std::stoul(argv[7]),cols=std::stoul(argv[8]),rows=std::stoul(argv[9]);
+      if (!width || width>4096 || !height || height>4096 || cols<2 || cols>64 || rows<2 || rows>64)
+        throw ParseError("invalid panorama mapping dimensions");
+      const auto camera=constrain_camera(geometry,{std::stod(argv[3]),std::stod(argv[4]),std::stod(argv[5])},
+                                         static_cast<unsigned>(width),static_cast<unsigned>(height));
+      std::cout << std::setprecision(12) << "camera," << camera.yaw << ',' << camera.pitch << ',' << camera.fov << '\n';
+      for (unsigned y=0;y<rows;++y) for (unsigned x=0;x<cols;++x) {
+        const auto point=panorama_point(geometry,camera,2.0*x/(cols-1)-1,2.0*y/(rows-1)-1,
+                                        static_cast<unsigned>(width),static_cast<unsigned>(height));
+        std::cout << point.x << ',' << point.y << '\n';
+      }
+    }
     else if (mode=="cue") std::cout << parse_cue(text).binary_name << "\tMODE1/2352\n";
     else if (mode=="ini") for (const auto& e:parse_ini(text))
       std::cout << e.line << '\t' << e.section << '\t' << e.key << '\t' << e.value << '\n';
@@ -29,10 +45,16 @@ int main(int argc,char** argv) {
       std::cout << "directory_complete=" << art.directory_complete << " available=" << art.entries.size() << " declared=" << art.declared_count << '\n';
       for (const auto& e:art.entries)
         std::cout << e.name << '\t' << e.offset << '\t' << e.stored_size << '\t' << e.auxiliary_size << '\t' << e.payload_available << '\n';
-    } else if (mode=="decode-aqc") {
-      if (argc!=4) throw ParseError("AQC conversion requires a new output directory");
+    } else if (mode=="decode-aqc" || mode=="render-panorama") {
+      if (argc!=4 && !(mode=="render-panorama" && argc==7))
+        throw ParseError("image conversion requires a new output directory; render-panorama optionally accepts YAW PITCH FOV");
       const auto info=parse_aqc(b);
-      const auto image=decode_aqc(b);
+      auto image=decode_aqc(b);
+      if (mode=="render-panorama") {
+        Camera camera;
+        if (argc==7) camera={std::stod(argv[4]),std::stod(argv[5]),std::stod(argv[6])};
+        image=render_panorama(image,panorama_geometry(b),camera,640,448);
+      }
       const std::filesystem::path root=argv[3];
       if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
       std::ofstream out(root/"decoded.ppm",std::ios::binary);

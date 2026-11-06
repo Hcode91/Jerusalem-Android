@@ -44,6 +44,11 @@ def control_center(xml, label):
     return None
 
 
+def camera_states(logs):
+    pattern = rb'Panorama frame: yaw=([-\d.]+) pitch=([-\d.]+) fov=([-\d.]+)'
+    return [tuple(map(float, match)) for match in re.findall(pattern, logs)]
+
+
 def current_ui():
     adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
     return adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml')
@@ -111,7 +116,7 @@ def synthetic_aqc():
     def pack(bits):
         bits += '0' * (-len(bits) % 8)
         return int(bits, 2).to_bytes(len(bits) // 8, 'big')
-    header = struct.pack('<III4f6I', 8, 4, 2, 0., 360., -75., 75., 0, 8, 0, 4, 64, 0x1000)
+    header = struct.pack('<III4f6I', 8, 4, 2, 0., 360., -75., 75., 0, 8, 0, 4, 64, 16)
     indices = pack('0' + '0' * 13 + '11' * 7)
     palette = pack(''.join('0' + f'{n:016b}' for n in (0xf800, 0x07e0, 0x001f, 0xffff)) + '11' * 32396)
     return struct.pack('<I', len(indices)) + header + indices + struct.pack('<I', len(palette)) + palette
@@ -189,8 +194,21 @@ def main():
         click('Close')
         wait_for(lambda: b'AQC static node image: 8 x 4' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Native AQC decoding/display path did not complete')
-        (OUTPUT / 'aqc-static-image.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        wait_for(lambda: b'Panorama frame:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'AQC camera frame was not rendered')
+        (OUTPUT / 'aqc-panorama.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        before = camera_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))[-1][0]
+        # The emulator's default screen is 1080x1920. Use its reported dimensions instead.
+        size = adb('shell', 'wm', 'size').decode()
+        dimensions = re.findall(r'(\d+)x(\d+)', size)
+        if not dimensions:
+            raise RuntimeError('Cannot determine emulator touch dimensions')
+        width, height = map(int, dimensions[-1])
+        adb('shell', 'input', 'swipe', str(width // 3), str(height // 2), str(2 * width // 3), str(height // 2), '350')
+        wait_for(lambda: any(abs((yaw-before+180)%360-180)>0.1 for yaw, _, _ in
+                             camera_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
+                 'Dragging did not change the panorama camera yaw')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

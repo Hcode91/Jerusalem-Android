@@ -21,6 +21,12 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_camera_state_evidence_ignores_other_diagnostics(self):
+        logs = (b'Ready.\nPanorama frame: yaw=225.000 pitch=0.000 fov=85.000 size=480x640\n'
+                b'Other status\nPanorama frame: yaw=196.667 pitch=-1.500 fov=68.000 size=480x640\n')
+        self.assertEqual(smoke.camera_states(logs), [(225., 0., 85.), (196.667, -1.5, 68.)])
+        self.assertEqual(smoke.camera_states(b'No camera frame rendered'), [])
+
     def test_synthetic_aqc_contains_known_colour_bars(self):
         sys.path.insert(0, str(Path(__file__).parents[1] / 'tools'))
         from aqc_decode import decode

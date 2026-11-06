@@ -19,7 +19,7 @@ AqcInfo parse_aqc(Bytes b) {
     if (!std::isfinite(angle)) throw ParseError("invalid AQC angle field");
   }
   if (b.u32(32)!=0 || b.u32(36)!=width || b.u32(40)!=0 || b.u32(44)!=height ||
-      b.u32(48)!=width*height*2 || b.u32(52)!=0x1000)
+      b.u32(48)!=width*height*2 || b.u32(52)!=width*2)
     throw ParseError("unsupported AQC static header variant");
   const auto primary=b.u32(0);
   b.require(56,primary);

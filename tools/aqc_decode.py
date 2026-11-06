@@ -48,7 +48,7 @@ def metadata(data):
     angles = struct.unpack_from('<4f', data, 16)
     rect = struct.unpack_from('<4I', data, 32)
     if (not all(math.isfinite(n) for n in angles) or rect != (0, width, 0, height) or
-            integer(data, 48, 4) != width * height * 2 or integer(data, 52, 4) != 0x1000):
+            integer(data, 48, 4) != width * height * 2 or integer(data, 52, 4) != width * 2):
         raise FormatError('unsupported AQC static header variant')
     primary_size = integer(data, 0, 4)
     secondary_header = 56 + primary_size
@@ -57,7 +57,7 @@ def metadata(data):
     if not primary_size or not secondary_size or end > len(data):
         raise FormatError('truncated or empty AQC compressed stream')
     return dict(width=width, height=height, source_bytes_per_pixel=bpp,
-                angles=list(angles), header_flags=0x1000, indices_offset=56,
+                angles=list(angles), row_stride_bytes=width*2, indices_offset=56,
                 indices_size=primary_size, palette_offset=secondary_header + 4,
                 palette_size=secondary_size, static_end=end, undecoded_tail_bytes=len(data)-end)
 
