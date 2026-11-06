@@ -4,6 +4,7 @@
 /android/.gradle/
 /android/local.properties
 /android/app/build/
+/android/app/.cxx/
 /private/
 /imports/
 /analysis-output/
@@ -20,4 +21,15 @@
 *.DIA
 *.DAN
 *.OUT
+*.at3
+*.aqc
+*.ci2
+*.wac
+*.was
+*.dia
+*.dan
+*.out
+*.ex
+*.wav
+*.bmp
 __pycache__/
