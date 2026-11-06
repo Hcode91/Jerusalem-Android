@@ -38,16 +38,22 @@ std::filesystem::path checked_path(const std::string& text) {
 
 class Audio {
   SDL_AudioStream* stream_=nullptr;
+  Uint64 started_=0, duration_ms_=0;
+  bool drained_=false;
+  std::string asset_;
  public:
   ~Audio() { stop(); }
-  void stop() { if (stream_) SDL_DestroyAudioStream(stream_); stream_=nullptr; }
+  void stop() { if (stream_) SDL_DestroyAudioStream(stream_); stream_=nullptr; drained_=false; }
   void pause(bool paused) {
     if (stream_) {
-      if (paused) SDL_PauseAudioStreamDevice(stream_); else SDL_ResumeAudioStreamDevice(stream_);
+      const bool ok=paused ? SDL_PauseAudioStreamDevice(stream_) : SDL_ResumeAudioStreamDevice(stream_);
+      if (!ok) report(std::string("Audio pause/resume failed: ")+SDL_GetError());
     }
   }
-  void play(jerusalem::Bytes b) {
+  void play(jerusalem::Bytes b,const std::string& name) {
     stop(); const auto w=jerusalem::parse_wave(b);
+    if (!(SDL_WasInit(SDL_INIT_AUDIO)&SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO))
+      throw jerusalem::ParseError(std::string("Audio initialization: ")+SDL_GetError());
     SDL_AudioSpec spec{};
     spec.format=w.bits==8 ? SDL_AUDIO_U8 : SDL_AUDIO_S16LE;
     spec.channels=w.channels; spec.freq=static_cast<int>(w.rate);
@@ -55,6 +61,25 @@ class Audio {
     if (!stream_ || !SDL_PutAudioStreamData(stream_,b.data()+w.data_offset,static_cast<int>(w.data_size)) ||
         !SDL_FlushAudioStream(stream_) || !SDL_ResumeAudioStreamDevice(stream_)) {
       const std::string error=SDL_GetError(); stop(); throw jerusalem::ParseError("Audio: "+error);
+    }
+    asset_=name; started_=SDL_GetTicks();
+    duration_ms_=(std::uint64_t(w.data_size)*1000+w.rate*w.channels*(w.bits/8)-1)/(w.rate*w.channels*(w.bits/8));
+    const char* driver=SDL_GetCurrentAudioDriver();
+    const char* device=SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(stream_));
+    __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Audio output: driver=%s device=%s source_bytes=%zu",
+                        driver?driver:"unknown",device?device:"unknown",w.data_size);
+    report("Playing audio: "+asset_+". Use Play audio to replay or Stop audio to stop.");
+  }
+  void update() {
+    if (!stream_ || drained_) return;
+    const int queued=SDL_GetAudioStreamQueued(stream_), available=SDL_GetAudioStreamAvailable(stream_);
+    if (queued<0 || available<0) {
+      const std::string error=SDL_GetError(); stop(); report("Audio stream error: "+error); return;
+    }
+    if (queued==0 && available==0 && SDL_GetTicks()-started_>=duration_ms_) {
+      drained_=true;
+      // This verifies delivery to SDL's output device, not audible sound at a speaker.
+      report("Audio buffer drained: "+asset_+". Tap Play audio to replay.");
     }
   }
 };
@@ -130,9 +155,9 @@ class InspectionScene {
       auto data=jerusalem::read_file(path); jerusalem::Bytes b(data);
       const auto description=jerusalem::describe_resource(b,path.filename().string());
       if (description.kind==jerusalem::ResourceKind::Bitmap) renderer_.bitmap(jerusalem::decode_bitmap(b));
-      else if (description.kind==jerusalem::ResourceKind::Wave) audio_.play(b);
+      else if (description.kind==jerusalem::ResourceKind::Wave) audio_.play(b,path.filename().string());
       renderer_.preview(description.details);
-      report(description.summary);
+      if (description.kind!=jerusalem::ResourceKind::Wave) report(description.summary);
     } catch (const std::exception& e) { renderer_.preview(e.what()); report(std::string("Asset error: ")+e.what()); }
   }
 };
@@ -155,6 +180,15 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeOpen(JNIEnv* env,jclass,jstring path) {
   try { const auto text=from_java(env,path); std::lock_guard<std::mutex> guard(bridge_mutex); pending_path=text; }
   catch (const std::exception& e) { report(e.what()); }
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,jstring path) {
+  try {
+    const auto file=checked_path(from_java(env,path));
+    const auto data=jerusalem::read_file(file);
+    jerusalem::parse_wave(jerusalem::Bytes(data));
+    return JNI_TRUE;
+  } catch (const std::exception&) { return JNI_FALSE; }
 }
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeCommand(JNIEnv*,jclass,jint command) {
@@ -203,6 +237,7 @@ int main(int,char**) {
       if (action&(1U<<2)) renderer.zoom(1.25f);
       if (action&(1U<<3)) renderer.zoom(0.8f);
       if (action&(1U<<4)) { audio.stop(); report("Audio stopped."); }
+      if (!background) audio.update();
       if (!background) renderer.draw(message);
       SDL_Delay(background?100:16);
     }

@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.view.View;
 import android.view.ViewGroup;
@@ -34,8 +36,26 @@ public class MainActivity extends SDLActivity {
     private TextView status;
     private Button importButton, browseButton;
     private File dataRoot;
+    private String selectedAudioPath, pendingAudioPath;
+    private String lastNativeStatus = "";
+    private boolean importing;
+    private final Handler statusHandler = new Handler(Looper.getMainLooper());
+    private final Runnable refreshStatus = new Runnable() {
+        @Override public void run() {
+            if (isFinishing() || isDestroyed() || mBrokenLibraries || status == null) return;
+            if (!importing) {
+                String message = nativeStatus();
+                if (!message.equals(lastNativeStatus)) {
+                    lastNativeStatus = message;
+                    status.setText(message);
+                }
+            }
+            statusHandler.postDelayed(this, 250);
+        }
+    };
     private static native byte[] nativeDescribe(String path);
     private static native void nativeOpen(String path);
+    private static native boolean nativeSupportsAudio(String path);
     private static native void nativeCommand(int command);
     private static native String nativeStatus();
 
@@ -44,6 +64,7 @@ public class MainActivity extends SDLActivity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (mBrokenLibraries) return;
+        setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         dataRoot = new File(getFilesDir(), "game-data");
         if (!dataRoot.isDirectory() && !dataRoot.mkdirs()) {
             showText("Storage error", "Cannot create private game-data directory.");
@@ -65,6 +86,10 @@ public class MainActivity extends SDLActivity {
         });
         browseButton = button("Browse assets", v -> browse(dataRoot));
         buttons.addView(importButton); buttons.addView(browseButton);
+        buttons.addView(button("Play audio", v -> {
+            if (selectedAudioPath == null) showText("Audio", "Choose a supported PCM WAV from Browse assets first. Compressed WAC/WAS files are not supported yet.");
+            else playWhenFocused(selectedAudioPath);
+        }));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
         buttons.addView(button("Zoom +", v -> nativeCommand(2)));
         buttons.addView(button("Zoom −", v -> nativeCommand(3)));
@@ -93,6 +118,39 @@ public class MainActivity extends SDLActivity {
         new AlertDialog.Builder(this).setTitle(title).setView(scroll).setPositiveButton("Close", null).show();
     }
 
+    private void playWhenFocused(String path) {
+        pendingAudioPath = path;
+        lastNativeStatus = "";
+        status.setText("Starting audio… Use the phone's media-volume controls if it is quiet.");
+        if (hasWindowFocus()) {
+            pendingAudioPath = null;
+            nativeOpen(path);
+        }
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && !mBrokenLibraries && pendingAudioPath != null) {
+            String path = pendingAudioPath;
+            pendingAudioPath = null;
+            nativeOpen(path);
+        }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (!mBrokenLibraries && status != null) {
+            statusHandler.removeCallbacks(refreshStatus);
+            statusHandler.post(refreshStatus);
+        }
+    }
+
+    @Override protected void onPause() {
+        statusHandler.removeCallbacks(refreshStatus);
+        pendingAudioPath = null;
+        super.onPause();
+    }
+
     private void browse(File directory) {
         File[] children = directory.listFiles(f -> f.isDirectory() || f.isFile());
         if (children == null || children.length == 0) { showText("Assets", "No imported files in this folder."); return; }
@@ -110,10 +168,19 @@ public class MainActivity extends SDLActivity {
                 try {
                     byte[] result = nativeDescribe(selected.getAbsolutePath());
                     String description = new String(result, Charset.forName("windows-1252"));
+                    boolean playableAudio = nativeSupportsAudio(selected.getAbsolutePath());
                     runOnUiThread(() -> {
-                        nativeOpen(selected.getAbsolutePath());
-                        status.setText(selected.getName() + ": " + description.split("\\r?\\n", 2)[0]);
-                        showText(selected.getName(), description);
+                        if (isFinishing() || isDestroyed()) return;
+                        pendingAudioPath = null;
+                        selectedAudioPath = playableAudio ? selected.getAbsolutePath() : null;
+                        if (playableAudio) {
+                            // A modal report would pause SDL while audio is being started.
+                            playWhenFocused(selectedAudioPath);
+                        } else {
+                            nativeOpen(selected.getAbsolutePath());
+                            status.setText(selected.getName() + ": " + description.split("\\r?\\n", 2)[0]);
+                            showText(selected.getName(), description);
+                        }
                     });
                 } catch (Exception error) {
                     runOnUiThread(() -> showText("Inspection failed", error.toString()));
@@ -126,6 +193,7 @@ public class MainActivity extends SDLActivity {
         super.onActivityResult(requestCode, resultCode, result);
         if (requestCode != PICK_TREE || resultCode != RESULT_OK || result == null || result.getData() == null) return;
         Uri tree = result.getData();
+        importing = true;
         importButton.setEnabled(false); browseButton.setEnabled(false); status.setText("Importing original data…");
         worker.execute(() -> {
             String message;
@@ -137,6 +205,7 @@ public class MainActivity extends SDLActivity {
             } catch (Exception error) { message = "Import stopped: " + error.getMessage() + ". Earlier completed files remain available."; }
             final String finalMessage = message;
             runOnUiThread(() -> { if (!isDestroyed()) {
+                importing = false;
                 status.setText(finalMessage); importButton.setEnabled(true); browseButton.setEnabled(true);
             }});
         });
@@ -201,6 +270,7 @@ public class MainActivity extends SDLActivity {
     }
 
     @Override protected void onDestroy() {
+        statusHandler.removeCallbacks(refreshStatus);
         worker.shutdownNow();
         super.onDestroy();
     }

@@ -33,6 +33,8 @@ static std::vector<std::uint8_t> art() {
 int main() {
   try {
     auto w=wave(); auto info=parse_wave(Bytes(w)); check(info.rate==22050 && info.data_size==4);
+    auto stereo=w; put(stereo,22,2,2); put(stereo,28,88200); put(stereo,32,4,2);
+    info=parse_wave(Bytes(stereo)); check(info.channels==2 && info.rate==22050 && info.bits==16 && info.data_size==4);
     for (std::size_t i=0;i<w.size();++i) rejects([&] { parse_wave(Bytes(w.data(),i)); });
     auto bad=w; put(bad,40,0xffffffff); rejects([&] { parse_wave(Bytes(bad)); });
     bad=w; put(bad,20,17,2); rejects([&] { parse_wave(Bytes(bad)); });
@@ -122,6 +124,11 @@ int main() {
     if (const char* path=std::getenv("JERUSALEM_PRIVATE_WAV")) {
       const auto bytes=read_file(path); const auto real=parse_wave(Bytes(bytes));
       check(real.channels==1 && real.rate==22050 && real.bits==16 && real.data_size==18866);
+    }
+    if (const char* path=std::getenv("JERUSALEM_PRIVATE_CROWD_WAV")) {
+      const auto bytes=read_file(path); const auto real=parse_wave(Bytes(bytes));
+      check(real.channels==2 && real.rate==22050 && real.bits==16 && real.data_size==649112);
+      check(describe_resource(Bytes(bytes),"a02_crowd.wav").kind==ResourceKind::Wave);
     }
     std::cout << checks << " checks passed; 4000 deterministic malformed-input rounds passed\n";
     return 0;

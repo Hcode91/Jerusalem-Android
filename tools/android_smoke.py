@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Actions-only emulator launch and synthetic image regression, never original playback."""
 import os
+import io
+import math
 from pathlib import Path
 import re
 import struct
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+import wave
 
 PACKAGE = 'org.jerusalem.engine'
 OUTPUT = Path('smoke-output')
@@ -94,6 +97,17 @@ def main():
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic.bmp'", input=bytes(bitmap))
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-labels.ini'",
             input=b'42\r\nENG #Synthetic label#\r\nFRA #Etiquette#\r\n')
+        # Match the reported original crowd sound's stereo/22050 Hz/S16 geometry.
+        # This two-second fixture is independently synthesized, never game audio.
+        audio = io.BytesIO()
+        frames = bytearray()
+        for index in range(44100):
+            frames.extend(struct.pack('<hh', int(8192 * math.sin(2 * math.pi * 440 * index / 22050)),
+                                      int(8192 * math.sin(2 * math.pi * 660 * index / 22050))))
+        with wave.open(audio, 'wb') as writer:
+            writer.setnchannels(2); writer.setsampwidth(2); writer.setframerate(22050)
+            writer.writeframes(frames)
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-audio.wav'", input=audio.getvalue())
         click('Browse assets')
         click('synthetic.bmp')
         click('Close')
@@ -107,7 +121,21 @@ def main():
         wait_for(lambda: b'Localization:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Native view did not use the localization-aware summary')
         (OUTPUT / 'text-labels.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP display and readable localization text.\nARM64 hardware and original asset playback remain separate validation gates.\n')
+        click('Browse assets')
+        click('synthetic-audio.wav')
+        # Selecting a WAV must leave the main window focused, without a report modal.
+        wait_for(lambda: b'Playing audio: synthetic-audio.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Selecting a PCM WAV did not start the native audio stream')
+        wait_for(lambda: b'Audio buffer drained: synthetic-audio.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'The native audio output device did not consume the PCM stream')
+        click('Play audio')
+        wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'Playing audio: synthetic-audio.wav') >= 2,
+                 'Play audio did not replay the selected sound')
+        logs = adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')
+        if b'driver=dummy' in logs or b'Audio output: driver=' not in logs:
+            raise RuntimeError('Audio smoke check did not use an Android output backend')
+        (OUTPUT / 'audio-playback.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP display, readable localization text, stereo PCM output-buffer consumption and replay.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 
