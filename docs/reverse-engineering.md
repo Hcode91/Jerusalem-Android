@@ -186,3 +186,7 @@ The user confirmed A01 traversal on Android. [Milestone 8](a01-audio-milestone-8
 ## Complete second-disc corpus
 
 Both uploaded split archives passed full ZIP CRC checks; the new Disc 1 matches the existing image. [Disc 2 survey](disc2-corpus-survey.md) records identities, the 208-file ISO index, successful native static decoding for 119 full nodes, structural counts for 498 channels/5880 frames, seven validated AT3 directories (3712 entries), and 80 CNM/CI2 headers. The separate 8617-byte numbered A07 resource contains two patch-framed records and remains outside full-node support. Disc 1 contains the complementary sound/dialogue resources for these areas. These are host coverage results, not original-routine verification for every new image or additional gameplay support.
+
+## Original A01 pickup effects and presentations
+
+The user confirmed scene audio/lifecycle operation. [Milestone 9](a01-pickups-milestone-9.md) establishes fresh visibility, hotspots, channel bindings and normal pickup effects for three A01 objects. Native Android/SDL2 now compose their real single-frame patches, remove them on collection, track the original byte counter and unique milestone, and show a text inventory. Registrations/initialization and 768 isolated original effect traces match extraction. This remains a limited pickup preview: other initial presentations, item use, intro/story callbacks, dialogue, puzzles and saves are not implemented. New device testing is pending.

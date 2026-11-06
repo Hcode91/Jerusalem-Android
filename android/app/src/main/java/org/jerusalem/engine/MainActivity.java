@@ -60,6 +60,7 @@ public class MainActivity extends SDLActivity {
     private static native boolean nativeSupportsAudio(String path);
     private static native void nativeCommand(int command);
     private static native String nativeStatus();
+    private static native String nativeInventory();
     private static native byte[] nativeExtractA01(byte[] program);
 
     @Override protected String[] getLibraries() { return new String[] {"SDL3", "main"}; }
@@ -101,6 +102,7 @@ public class MainActivity extends SDLActivity {
         });
         navigation.setOnLongClickListener(v -> { if (!importing) chooseNavigationSource(); return true; });
         buttons.addView(navigation);
+        buttons.addView(button("Inventory", v -> showText("Inventory", nativeInventory())));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
         buttons.addView(button("Flat / 360", v -> nativeCommand(5)));
         buttons.addView(button("Zoom +", v -> nativeCommand(2)));

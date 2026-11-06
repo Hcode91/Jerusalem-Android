@@ -33,6 +33,15 @@ class SmokeHarnessTests(unittest.TestCase):
             self.assertEqual(adb.call_args_list[0].args[:3], ('shell', 'input', 'swipe'))
             self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '120', '125'))
 
+    def test_scrolling_reverses_to_reach_an_earlier_control(self):
+        edge = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,100][300,150]'})
+        found = ui({'text': 'A01 NAVIGATION', 'enabled': 'true', 'bounds': '[20,100][220,150]'})
+        with patch.object(smoke, 'current_ui', side_effect=[edge, edge, edge, found]), patch.object(smoke, 'adb') as adb:
+            smoke.click_scrolling('A01 navigation')
+            self.assertEqual(adb.call_args_list[0].args, ('shell', 'input', 'swipe', '280', '125', '20', '125', '350'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '20', '125', '280', '125', '350'))
+            self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '120', '125'))
+
     def test_camera_state_evidence_ignores_other_diagnostics(self):
         logs = (b'Ready.\nPanorama frame: yaw=225.000 pitch=0.000 fov=85.000 size=480x640\n'
                 b'Other status\nPanorama frame: yaw=196.667 pitch=-1.500 fov=68.000 size=480x640\n')

@@ -69,22 +69,29 @@ def click(text):
 
 
 def click_scrolling(text):
-    for _ in range(6):
-        xml = current_ui()
-        center = control_center(xml, text)
-        if center is not None:
-            adb('shell', 'input', 'tap', str(center[0]), str(center[1]))
-            return
-        for node in ET.fromstring(xml).iter('node'):
-            if node.get('class') != 'android.widget.HorizontalScrollView':
-                continue
-            values = list(map(int, re.findall(r'\d+', node.get('bounds', ''))))
-            if len(values) == 4 and values[2]-values[0]>40 and values[3]>values[1]:
-                x1, y1, x2, y2 = values
-                adb('shell', 'input', 'swipe', str(x2-20), str((y1+y2)//2), str(x1+20), str((y1+y2)//2), '350')
+    # Search both ways: opening Inventory can leave earlier controls offscreen.
+    for direction in (1, -1):
+        previous = None
+        for _ in range(6):
+            xml = current_ui()
+            center = control_center(xml, text)
+            if center is not None:
+                adb('shell', 'input', 'tap', str(center[0]), str(center[1]))
+                return
+            if xml == previous:
                 break
-        else:
-            raise RuntimeError(f'No horizontal control row while locating {text}')
+            previous = xml
+            for node in ET.fromstring(xml).iter('node'):
+                if node.get('class') != 'android.widget.HorizontalScrollView':
+                    continue
+                values = list(map(int, re.findall(r'\d+', node.get('bounds', ''))))
+                if len(values) == 4 and values[2]-values[0]>40 and values[3]>values[1]:
+                    x1, y1, x2, y2 = values
+                    start, end = (x2-20, x1+20) if direction == 1 else (x1+20, x2-20)
+                    adb('shell', 'input', 'swipe', str(start), str((y1+y2)//2), str(end), str((y1+y2)//2), '350')
+                    break
+            else:
+                raise RuntimeError(f'No horizontal control row while locating {text}')
     raise RuntimeError(f'Scrollable UI control not found: {text}')
 
 
@@ -255,12 +262,14 @@ def main():
         # These records and images are synthetic; no original executable is used in CI.
         for name in ('SYNTH_A', 'SYNTH_B'):
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}.aqc'", input=synthetic_animated_aqc())
-        model = ('JERUSALEM_A01_NAV_V2\nnode 1 SYNTH_A 2\nnode 2 SYNTH_B 2\n'
+        model = ('JERUSALEM_A01_NAV_V3\nnode 1 SYNTH_A 2\nnode 2 SYNTH_B 2\n'
                  'exit 1 0 2 0 1 0 -750 3600 750 53 0 0 0 85\n'
                  'exit 2 0 1 0 0 0 -750 3600 750 53 0 0 0 85\n'
                  'exit 2 1 99 1 1 0 -750 3600 750 53 0 0 0 85\n'
                  'ambient 1 7 80 SYNTH_LOOP\nambient 2 7 55 SYNTH_LOOP\n'
-                 'ambient 1 8 50 SYNTH_SECOND\n')
+                 'ambient 1 8 50 SYNTH_SECOND\n'
+                 'item 10 2 0 -750 3600 750 60 0 50 1 "Synthetic pickup"\n'
+                 'item-channel 10 1 0\nitem-channel 10 2 0\n')
         # Short, distinct generated loops exercise repeated refill and concurrent voices.
         for name, frequency in (('SYNTH_LOOP', 330), ('SYNTH_SECOND', 550)):
             sound = io.BytesIO()
@@ -293,6 +302,15 @@ def main():
             raise RuntimeError('Scene transition restarted a retained track or kept an unused voice')
 
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Collected: Synthetic pickup [10]' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Item hotspot did not take priority over the overlapping puzzle action')
+        wait_for(lambda: b'Pickup state: item=10 counter=50 value=1 inventory=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Pickup did not update the native variable and inventory')
+        click_scrolling('Inventory')
+        wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic pickup' in current_ui(),
+                 'Inventory dialog did not display the collected original-format item')
+        click('Close')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
         wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Disabled return route or puzzle boundary was not respected')
         (OUTPUT / 'a01-traversal-synthetic.png').write_bytes(adb('exec-out', 'screencap', '-p'))
@@ -301,7 +319,7 @@ def main():
                  'Traversal preview did not switch off')
         wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Leaving traversal did not close ambient playback')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

@@ -1,4 +1,5 @@
 #include "jerusalem/navigation.hpp"
+#include "jerusalem/interactions.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -41,6 +42,11 @@ class Pe {
       return b_.slice(std::size_t(s.offset)+delta,size);
     }
     throw ParseError("PE address is not file backed");
+  }
+  std::string label(std::uint32_t address) const {
+    std::string result;
+    for(unsigned i=0;i<96;++i) {const auto c=at(address+i,1).u8(0);if(!c)return result;if(c<32 || c>126)throw ParseError("unsupported item label encoding");result+=char(c);}
+    throw ParseError("unterminated item label");
   }
   std::string name(std::uint32_t address,bool filename=false) const {
     std::string text;
@@ -158,6 +164,43 @@ SceneGraph extract_a01_navigation(Bytes b) {
       g.ambient.push_back({a[0],a[1],a[2],sounds.at(a[1])});
     }
   if (g.ambient.size()!=17) throw ParseError("incomplete A01 ambient setup");
+  std::map<std::uint32_t,PickupEffect> effects;
+  for(const auto address:{0x44a74cU,0x44a7b1U,0x44a816U}) {
+    const auto effect=parse_pickup_effect(pe.at(address,79),address);effects.emplace(effect.object,effect);
+  }
+  std::map<std::uint32_t,Collectible> objects;
+  std::set<std::uint32_t> hotspots;
+  for(const auto& call:packet(0x47e493,0x47e62b)) {
+    const auto& a=call.arguments;
+    if(a.empty() || !effects.count(a[0])) continue;
+    if(call.target==0x429700) {
+      if(a.size()!=4 || a[3]!=1 || objects.count(a[0])) throw ParseError("unsupported collectible declaration");
+      Collectible object{};object.id=a[0];object.name=pe.label(a[1]);
+      object.counter=effects.at(a[0]).counter;object.milestone=effects.at(a[0]).milestone;
+      objects.emplace(object.id,std::move(object));
+    } else if(call.target==0x429c20) {
+      if(a.size()!=9 || a[6]!=1 || a[7]!=60 || a[8]!=0 || !objects.count(a[0]) || !hotspots.insert(a[0]).second)
+        throw ParseError("unsupported collectible hotspot");
+      auto& item=objects.at(a[0]);item.node=a[1];item.left=signed_word(a[2]);item.top=signed_word(a[3]);
+      item.right=signed_word(a[4]);item.bottom=signed_word(a[5]);item.cursor=a[7];item.event=a[8];
+    } else if(call.target==0x42a270) {
+      if(a.size()!=4 || a[1]!=0 || !objects.count(a[0])) throw ParseError("unsupported collectible channel binding");
+      objects.at(a[0]).channels.push_back({a[2],a[3]});
+    } else if(call.target!=0x42a000 || a.size()!=1) throw ParseError("unknown collectible setup operation");
+  }
+  std::map<std::uint32_t,std::uint32_t> initial;
+  for(const auto& call:packet(0x44f0ff,0x44f145)) {
+    if(call.target!=0x42c1a0 || call.arguments.size()!=2) throw ParseError("unsupported initial pickup variables");
+    initial.emplace(call.arguments[0],call.arguments[1]);
+  }
+  for(const auto& call:packet(0x44f06b,0x44f095)) {
+    const auto& a=call.arguments;
+    if(call.target!=0x42a920 || a.size()!=2 || a[1]!=0 || !objects.count(a[0])) throw ParseError("unsupported initial collectible visibility");
+    const auto& item=objects.at(a[0]);
+    if(!initial.count(item.counter) || initial.at(item.counter)!=0 || !hotspots.count(item.id)) throw ParseError("unproven fresh collectible state");
+    g.items.push_back(item);
+  }
+  if(g.items.size()!=3) throw ParseError("incomplete supported collectible setup");
   validate_navigation(g);
   return g;
 }
@@ -168,7 +211,7 @@ const SceneNode& scene_node(const SceneGraph& g,std::uint32_t id) {
   return *node;
 }
 void validate_navigation(const SceneGraph& g) {
-  if (g.nodes.empty() || g.nodes.size()>64 || g.exits.size()>512 || g.ambient.size()>192) throw ParseError("invalid navigation record counts");
+  if (g.nodes.empty() || g.nodes.size()>64 || g.exits.size()>512 || g.ambient.size()>192 || g.items.size()>16) throw ParseError("invalid navigation record counts");
   std::set<std::uint32_t> ids;
   std::set<std::string> names;
   std::set<std::pair<std::uint32_t,std::uint32_t>> slots;
@@ -193,6 +236,18 @@ void validate_navigation(const SceneGraph& g) {
     if (std::count_if(g.ambient.begin(),g.ambient.end(),[&](const SceneAmbient& other){return other.node==a.node;})>3)
       throw ParseError("too many ambient voices in scene");
   }
+  std::set<std::uint32_t> item_ids;
+  for(const auto& item:g.items) {
+    scene_node(g,item.node);
+    if(!item.id || item.id>0x7fffffffU || !item_ids.insert(item.id).second || !item.counter || item.counter>0x7fffffffU ||
+       item.milestone>127 || item.cursor>0x7fffffffU || item.event!=0 || item.name.empty() || item.name.size()>95 ||
+       item.channels.empty() || item.channels.size()>64 || item.left<0 || item.left>=item.right || item.right>3600 ||
+       item.top< -900 || item.top>=item.bottom || item.bottom>900) throw ParseError("invalid collectible record");
+    for(unsigned char c:item.name) if(c<32 || c>126) throw ParseError("unsupported item label encoding");
+    std::set<std::pair<std::uint32_t,std::uint32_t>> bound;
+    for(const auto& b:item.channels) if(b.channel>=scene_node(g,b.node).channels || !bound.insert({b.node,b.channel}).second)
+      throw ParseError("invalid/duplicate collectible channel binding");
+  }
   for (const auto& e:g.exits) {
     scene_node(g,e.source); if (!e.puzzle) scene_node(g,e.target);
     if (!e.target || e.target>0x7fffffffU || e.cursor>0x7fffffffU || e.event>0x7fffffffU ||
@@ -207,20 +262,25 @@ void validate_navigation(const SceneGraph& g) {
 
 std::string write_navigation(const SceneGraph& g) {
   validate_navigation(g);
-  std::ostringstream out; out.imbue(std::locale::classic()); out << (g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
+  std::ostringstream out; out.imbue(std::locale::classic()); out << (!g.items.empty()?"JERUSALEM_A01_NAV_V3\n":g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
   for (const auto& n:g.nodes) out << "node " << n.id << ' ' << n.asset << ' ' << n.channels << '\n';
   for (const auto& e:g.exits)
     out << "exit " << e.source << ' ' << e.slot << ' ' << e.target << ' ' << e.puzzle << ' ' << e.enabled << ' '
         << e.left << ' ' << e.top << ' ' << e.right << ' ' << e.bottom << ' ' << e.cursor << ' ' << e.event << ' '
         << e.arrival.yaw << ' ' << e.arrival.pitch << ' ' << e.arrival.fov << '\n';
   for (const auto& a:g.ambient) out << "ambient " << a.node << ' ' << a.sound << ' ' << a.volume << ' ' << a.stem << '\n';
+  for(const auto& item:g.items) {
+    out << "item " << item.id << ' ' << item.node << ' ' << item.left << ' ' << item.top << ' ' << item.right << ' ' << item.bottom << ' '
+        << item.cursor << ' ' << item.event << ' ' << item.counter << ' ' << item.milestone << ' ' << std::quoted(item.name) << '\n';
+    for(const auto& b:item.channels) out << "item-channel " << item.id << ' ' << b.node << ' ' << b.channel << '\n';
+  }
   return out.str();
 }
 SceneGraph parse_navigation(const std::string& text) {
   if (text.size()>128*1024) throw ParseError("navigation model exceeds 128 KiB limit");
   std::istringstream lines(text); std::string line;
-  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2")) throw ParseError("not a native A01 navigation model");
-  const bool audio=line=="JERUSALEM_A01_NAV_V2";
+  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2" && line!="JERUSALEM_A01_NAV_V3")) throw ParseError("not a native A01 navigation model");
+  const bool items=line=="JERUSALEM_A01_NAV_V3",audio=items || line=="JERUSALEM_A01_NAV_V2";
   SceneGraph g;
   while (std::getline(lines,line)) {
     if (line.empty()) continue;
@@ -240,6 +300,16 @@ SceneGraph parse_navigation(const std::string& text) {
       if (!(row>>a.node>>a.sound>>a.volume>>a.stem) || (row>>extra) || g.ambient.size()>=192)
         throw ParseError("invalid ambient model row");
       g.ambient.push_back(std::move(a));
+    } else if(kind=="item" && items) {
+      Collectible item{};
+      if(!(row>>item.id>>item.node>>item.left>>item.top>>item.right>>item.bottom>>item.cursor>>item.event>>item.counter>>item.milestone>>std::quoted(item.name)) || (row>>extra) || g.items.size()>=16) throw ParseError("invalid collectible row");
+      g.items.push_back(std::move(item));
+    } else if(kind=="item-channel" && items) {
+      std::uint32_t id;ItemChannel b{};
+      if(!(row>>id>>b.node>>b.channel) || (row>>extra)) throw ParseError("invalid collectible channel row");
+      const auto item=std::find_if(g.items.begin(),g.items.end(),[&](const Collectible& c){return c.id==id;});
+      if(item==g.items.end() || item->channels.size()>=64) throw ParseError("collectible channel has no bounded owner");
+      item->channels.push_back(b);
     } else throw ParseError("unknown navigation model row");
   }
   validate_navigation(g); return g;
