@@ -44,6 +44,7 @@ jobs:
           git -C third_party/SDL fetch --depth 1 origin 7f3ae3d57459e59943a4ecfefc8f6277ec6bf540
           git -C third_party/SDL checkout --detach FETCH_HEAD
           test "$(git -C third_party/SDL rev-parse HEAD)" = 7f3ae3d57459e59943a4ecfefc8f6277ec6bf540
+          git -C third_party/SDL apply ../../patches/sdl-android-lint.patch
           mkdir -p android/app/src/main/assets/licenses
           cp third_party/SDL/LICENSE.txt android/app/src/main/assets/licenses/SDL.txt
           # We use the explicitly provisioned Gradle distribution, not SDL's sample wrapper.

@@ -1,0 +1,22 @@
+diff --git a/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java b/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
+--- a/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
++++ b/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
+@@ -487,6 +487,7 @@
+         return button_mask;
+     }
+ }
+ 
++@android.annotation.TargetApi(31)
+ class SDLHapticHandler_API31 extends SDLHapticHandler {
+     @Override
+diff --git a/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java b/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
+--- a/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
++++ b/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
+@@ -139,6 +139,7 @@
+         return result;
+     }
+ 
++    @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
+     private void initializeUSB() {
+         mUsbManager = (UsbManager)mContext.getSystemService(Context.USB_SERVICE);
+         if (mUsbManager == null) {
