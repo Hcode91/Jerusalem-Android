@@ -691,7 +691,14 @@ class InspectionScene {
       navigation_=std::move(prepared.graph);assets_=std::move(prepared.assets);interactions_=std::make_unique<jerusalem::InteractionState>(*navigation_);
       story_art_=std::move(art);system_art_=std::move(system);story_=std::make_unique<jerusalem::A01Story>(setup,*navigation_,*interactions_);
       story_tick_=SDL_GetTicks();story_elapsed_=0;story_seconds_=0;story_halted_=false;story_->start();publish_inventory();pump_story();
-    }catch(const std::exception& e){report(std::string("A01 story unavailable: ")+e.what()+". Refresh connections by long-pressing A01 navigation and selecting Jerusalem.ex_.");}
+    }catch(const std::exception& e){
+      const std::string reason=e.what();std::string recovery;
+      if(reason.find(".tsv")!=std::string::npos || reason.find("refresh A01 connections")!=std::string::npos)
+        recovery=". Refresh connections by long-pressing A01 navigation and selecting Jerusalem.ex_.";
+      else if(reason.find("missing dialogue")!=std::string::npos || reason.find("missing original game file")!=std::string::npos)
+        recovery=". Use Import data to add the original game data containing this resource.";
+      report("A01 story unavailable: "+reason+recovery);
+    }
   }
   void update_story() {
     const auto now=SDL_GetTicks();auto delta=now-story_tick_;story_tick_=now;

@@ -270,7 +270,9 @@ def synthetic_stage_fixture(bitmap, pcm_wave):
     archive = b'ATIII'+bytes(3)+struct.pack('<III', 255, 1, 255)+bytes(12)+entry+bitmap
     files['data/A01.AT3'] = files['data/SY.AT3'] = archive
     for voice in ids:
-        files[f'data/a01/sound/eng/SYNTH_VOICE_{voice}.WAC'] = pcm_wave
+        # The original opening is WAS on disc despite the executable naming WAC.
+        extension = 'WAS' if voice == 10999 else 'WAC'
+        files[f'data/a01/sound/eng/SYNTH_VOICE_{voice}.{extension}'] = pcm_wave
         files[f'data/a01/dia/eng/SYNTH_VOICE_{voice}.DIA'] = b'0 Synthetic story speech\r\n400 END\r\n'
     for movie in ('001', '002', '003', '004', '006', '007A', '007B', '007C', '009'):
         files[f'data/a01/pla/eng/A01S01_AN{movie}.CI2'] = synthetic_cinema(3, preload_audio=True)

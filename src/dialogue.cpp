@@ -64,6 +64,19 @@ DialogueFiles resolve_dialogue(const std::filesystem::path& root,const DialogueR
   }
   if(!area)throw ParseError("missing dialogue area: "+d.area);
   const auto sound=child(child(*area,"SOUND",true),"ENG",true),dia=child(child(*area,"DIA",true),"ENG",true);
-  return {child(sound,d.stem+".WAC",false),child(dia,d.stem+".DIA",false)};
+  // Executable registrations can name .WAC while the disc stores .WAS
+  // (A01's ISHT_DIA001, for example). Decoding is selected from the bytes.
+  std::optional<std::filesystem::path> audio;
+  for(const auto* suffix:{".WAC",".WAS",".WAV"}) {
+    std::optional<std::filesystem::path> candidate;
+    try {candidate=child(sound,d.stem+suffix,false);}
+    catch(const ParseError& e) {if(std::string(e.what()).find("missing dialogue data:")!=0)throw;}
+    if(candidate) {
+      if(audio)throw ParseError("ambiguous dialogue audio: "+d.stem+" has multiple WAC/WAS/WAV files");
+      audio=std::move(candidate);
+    }
+  }
+  if(!audio)throw ParseError("missing dialogue audio: "+d.stem+" (expected WAC, WAS or WAV in "+sound.string()+")");
+  return {*audio,child(dia,d.stem+".DIA",false)};
 }
 }

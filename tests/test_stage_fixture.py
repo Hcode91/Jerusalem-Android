@@ -22,6 +22,8 @@ class StageFixtureTests(unittest.TestCase):
         struct.pack_into('<IiiHH', bitmap, 14, 40, 2, 2, 1, 24)
         bitmap[54:] = bytes([255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0])
         files = synthetic_stage_fixture(bytes(bitmap), b'synthetic PCM supplied separately')
+        self.assertIn('data/a01/sound/eng/SYNTH_VOICE_10999.WAS', files)
+        self.assertNotIn('data/a01/sound/eng/SYNTH_VOICE_10999.WAC', files)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name, data in files.items():
