@@ -78,6 +78,34 @@ def collect_diagnostics():
         (OUTPUT / 'diagnostic-errors.txt').write_text(''.join(errors))
 
 
+def compressed_audio_fixtures():
+    """Generate independent triangle/square signals in the documented dialects."""
+    def pack(bits):
+        bits += '0' * (-len(bits) % 8)
+        return int(bits, 2).to_bytes(len(bits) // 8, 'big')
+
+    def header(channels, pcm):
+        return (b'RIFF' + struct.pack('<I', 36 + pcm) + b'WAVEfmt ' +
+                struct.pack('<IHHIIHH', 16, 1, channels, 22050, 44100 * channels, channels * 2, 16) +
+                b'data' + struct.pack('<I', pcm))
+
+    payload = pack('000' + (('0' + f'{16:010b}' + '1' * 7) + ('0' + f'{528:010b}' + '1' * 7)) * 16)
+    mono_size = 88 * 512
+    mono = struct.pack('<II', 88, 44 + mono_size) + header(1, mono_size)
+    mono += (struct.pack('<H', len(payload)) + payload) * 88
+    tokens, remaining, high = [], 44100, True
+    while remaining:
+        run = min(100, remaining)
+        tokens.append('0' + f'{0x100 if high else 0xf00:012b}' + '11' * (run - 1))
+        remaining -= run
+        high = not high
+    payload = pack(''.join(tokens))
+    stereo_size = 44100 * 2
+    stereo = (struct.pack('<II', 1, 44 + stereo_size) + header(2, stereo_size) +
+              struct.pack('<II', len(payload), stereo_size) + payload)
+    return {'synthetic-mono.wac': mono, 'synthetic-stereo.was': stereo}
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Android runtime smoke tests run only in GitHub Actions')
@@ -108,6 +136,8 @@ def main():
             writer.setnchannels(2); writer.setsampwidth(2); writer.setframerate(22050)
             writer.writeframes(frames)
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-audio.wav'", input=audio.getvalue())
+        for name, data in compressed_audio_fixtures().items():
+            adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=data)
         click('Browse assets')
         click('synthetic.bmp')
         click('Close')
@@ -135,7 +165,14 @@ def main():
         if b'driver=dummy' in logs or b'Audio output: driver=' not in logs:
             raise RuntimeError('Audio smoke check did not use an Android output backend')
         (OUTPUT / 'audio-playback.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP display, readable localization text, stereo PCM output-buffer consumption and replay.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        for name in compressed_audio_fixtures():
+            click('Browse assets')
+            click(name)
+            wait_for(lambda: ('Playing audio: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                     f'{name} did not decode and start playing')
+            wait_for(lambda: ('Audio buffer drained: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                     f'{name} decoded output did not drain')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP display, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

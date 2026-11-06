@@ -31,6 +31,12 @@ struct Wave {
   std::uint32_t rate;
   std::size_t data_offset, data_size, file_size;
 };
+struct AudioBlock { std::size_t payload_offset, stored_size, decoded_size; };
+struct GameAudio {
+  std::uint16_t channels;
+  std::uint32_t rate, pcm_size, padded_wave_size;
+  std::vector<AudioBlock> blocks;
+};
 struct Bitmap {
   std::uint32_t width, height;
   std::vector<std::uint8_t> rgba;
@@ -47,7 +53,7 @@ struct ArtDirectory {
 struct LocalizedEntry { std::string key, language, title, text; };
 struct DanTriple { std::uint32_t first, second, third; };
 struct Dan { std::vector<DanTriple> levels, intervals; std::uint32_t end; };
-enum class ResourceKind { Unsupported, Bitmap, Wave, Archive, LocalizedText, DialogueAnimation, Text };
+enum class ResourceKind { Unsupported, Bitmap, Wave, CompressedAudio, Archive, LocalizedText, DialogueAnimation, Text };
 struct ResourceDescription {
   ResourceKind kind;
   std::string summary;
@@ -59,6 +65,8 @@ std::vector<LocalizedEntry> parse_localized(const std::string& text);
 Dan parse_dan(const std::string& text);
 std::vector<std::uint8_t> read_file(const std::filesystem::path& path);
 Wave parse_wave(Bytes bytes);
+GameAudio parse_game_audio(Bytes bytes);
+std::vector<std::uint8_t> decode_game_audio(Bytes bytes);
 Bitmap decode_bitmap(Bytes bytes);
 Cue parse_cue(const std::string& text);
 std::vector<IniEntry> parse_ini(const std::string& text);

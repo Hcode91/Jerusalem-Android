@@ -2,6 +2,8 @@
 
 This is a specification and inspection checkpoint, **not a working audio converter**. No PCM is reconstructed by the new tool and Android WAC/WAS playback remains unsupported.
 
+Subsequent progress: [milestone 3](wac-was-milestone-3.md) implements conversion and connects native playback. This document preserves the earlier inspection checkpoint.
+
 Evidence consists of Ghidra decompilation checked against x86 instructions in executable SHA-256 `b4293e49167bc85a105fb8bef554972cc8c70406afa6da7096facf6640040687`, plus complete original files from Disc 1. Original-derived code and data remain under ignored `private/`; no decompiled code is copied into an implementation.
 
 ## Functions traced

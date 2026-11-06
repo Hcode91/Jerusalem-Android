@@ -4,6 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
+import io
+import sys
+import wave
 
 spec = importlib.util.spec_from_file_location('android_smoke', Path(__file__).parents[1] / 'tools/android_smoke.py')
 smoke = importlib.util.module_from_spec(spec)
@@ -18,6 +21,15 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_compressed_audio_signals_are_nonempty_valid_waves(self):
+        sys.path.insert(0, str(Path(__file__).parents[1] / 'tools'))
+        from wac_decode import decode
+        for name, data in smoke.compressed_audio_fixtures().items():
+            with self.subTest(file=name), wave.open(io.BytesIO(decode(data))) as reader:
+                self.assertEqual(reader.getframerate(), 22050)
+                self.assertGreaterEqual(reader.getnframes(), 22050)
+                self.assertTrue(any(reader.readframes(reader.getnframes())))
+
     def test_android_all_caps_button_regression(self):
         xml = ui({'text': 'BROWSE ASSETS', 'enabled': 'true', 'bounds': '[12,40][152,88]'})
         self.assertEqual(smoke.control_center(xml, 'Browse assets'), (82, 64))

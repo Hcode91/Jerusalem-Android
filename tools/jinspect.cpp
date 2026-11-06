@@ -6,7 +6,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|extract-media|extract-at3 FILE [NEW_OUTPUT_DIRECTORY]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -29,6 +29,15 @@ int main(int argc,char** argv) {
       std::cout << "directory_complete=" << art.directory_complete << " available=" << art.entries.size() << " declared=" << art.declared_count << '\n';
       for (const auto& e:art.entries)
         std::cout << e.name << '\t' << e.offset << '\t' << e.stored_size << '\t' << e.auxiliary_size << '\t' << e.payload_available << '\n';
+    } else if (mode=="decode-audio") {
+      if (argc!=4) throw ParseError("audio conversion requires a new output directory");
+      const auto wave=decode_game_audio(b);
+      const std::filesystem::path root=argv[3];
+      if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
+      std::ofstream out(root/"decoded.wav",std::ios::binary);
+      out.write(reinterpret_cast<const char*>(wave.data()),static_cast<std::streamsize>(wave.size()));
+      if (!out) throw ParseError("failed writing decoded audio");
+      std::cout << wave.size() << " PCM WAVE bytes written to " << (root/"decoded.wav") << '\n';
     } else if (mode=="extract-media" || mode=="extract-at3") {
       if (argc!=4) throw ParseError("extraction requires a new output directory");
       std::vector<Embedded> entries;
