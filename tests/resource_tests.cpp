@@ -106,6 +106,7 @@ int main() {
       attempt([&]{parse_wave(Bytes(noise));}); attempt([&]{decode_bitmap(Bytes(noise));});
       attempt([&]{parse_at3(Bytes(noise),true);}); attempt([&]{scan_media(Bytes(noise));});
       attempt([&]{decode_game_audio(Bytes(noise));});
+      attempt([&]{decode_aqc(Bytes(noise));});
     }
     // Optional private regression: no samples are copied into the repository.
     if (const char* path=std::getenv("JERUSALEM_PRIVATE_AT3")) {

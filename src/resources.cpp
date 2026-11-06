@@ -313,6 +313,17 @@ ResourceDescription describe_resource(Bytes b, const std::string& filename) {
         "Some original resources have .bmp names but contain Cinema data. Renaming them does not convert their format.\n"
         "This is a current engine limitation; the app cannot run game scenes yet.");
 
+  // No AQC magic exists in this observed dialect; require the full header model.
+  if (b.size()>=56 && b.u32(12)==2 && b.u32(52)==0x1000) {
+    const auto node=parse_aqc(b);
+    const auto summary="AQC static node image: "+std::to_string(node.width)+" x "+std::to_string(node.height)+".";
+    const auto details=summary+"\nThe native view displays decoded original pixels as a flat image.\n"
+        "Drag to pan or use Fit image / Zoom. The 360-degree projection is not implemented.\n"
+        "Trailing bytes not decoded: "+std::to_string(node.tail_size)+
+        ". Embedded animations, navigation and hotspots are not implemented.";
+    return result(ResourceKind::AqcImage,summary,details);
+  }
+
   // Preserve original single-byte text. NUL/control-rich binary files are not text.
   bool text_file=b.size()>0 && b.size()<=4*1024*1024;
   for (std::size_t i=0;text_file && i<b.size();++i) {

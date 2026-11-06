@@ -1,30 +1,9 @@
 #include "jerusalem/resources.hpp"
 #include <algorithm>
-#include <array>
+#include "codec_bits.hpp"
 #include <optional>
 
 namespace jerusalem {
-namespace {
-class BitReader {
-  Bytes data_;
-  std::size_t position_=0;
- public:
-  explicit BitReader(Bytes data):data_(data) {}
-  std::size_t position() const { return position_; }
-  std::uint32_t take(unsigned width) {
-    if (width>16 || width>data_.size()*8-position_) throw ParseError("audio block ends inside a token");
-    std::uint32_t value=0;
-    for (unsigned i=0;i<width;++i,++position_)
-      value=(value<<1)|((data_.u8(position_/8)>>(7-position_%8))&1U);
-    return value;
-  }
-  void finish() {
-    const auto remaining=data_.size()*8-position_;
-    if (remaining>=8) throw ParseError("unexplained bytes after audio block tokens");
-    if (take(static_cast<unsigned>(remaining))) throw ParseError("unsupported nonzero audio alignment bits");
-  }
-};
-}
 
 GameAudio parse_game_audio(Bytes b) {
   if (b.size()>max_resource_bytes) throw ParseError("compressed audio exceeds 64 MiB input limit");
@@ -79,8 +58,9 @@ std::vector<std::uint8_t> decode_game_audio(Bytes b) {
   std::uint16_t predictor=0;
   std::optional<std::int32_t> delta;
   for (const auto& block:info.blocks) {
-    BitReader bits(b.slice(block.payload_offset,block.stored_size));
+    const auto payload=b.slice(block.payload_offset,block.stored_size);
     if (info.channels==1) {
+      detail::BitReader bits(payload);
       if (bits.take(3)) throw ParseError("unsupported nonzero mono audio prefix");
       for (unsigned i=0;i<256;++i) {
         if (bits.take(1)==0) {
@@ -92,34 +72,10 @@ std::vector<std::uint8_t> decode_game_audio(Bytes b) {
         predictor=static_cast<std::uint16_t>(std::int32_t(predictor)+*delta);
         emit(predictor);
       }
+      bits.finish();
     } else {
-      std::array<std::uint16_t,64> cache{};
-      std::array<std::size_t,64> used{};
-      std::size_t replacement=0, selected=0;
-      std::optional<std::uint16_t> previous;
-      for (std::size_t i=0;i<block.decoded_size/2;++i) {
-        std::uint16_t sample;
-        if (bits.take(1)==0) {
-          sample=static_cast<std::uint16_t>(bits.take(12)<<4);
-          selected=replacement;
-          cache[selected]=sample;
-        } else {
-          if (bits.take(1)==0) {
-            selected=bits.take(6);
-            sample=cache[selected];
-          } else {
-            if (!previous) throw ParseError("audio sample repeated before initialization");
-            sample=*previous;
-          }
-          used[selected]=bits.position();
-          if (selected==replacement)
-            replacement=static_cast<std::size_t>(std::min_element(used.begin(),used.end())-used.begin());
-        }
-        emit(sample);
-        previous=sample;
-      }
+      detail::decode_cache(payload,12,4,block.decoded_size/2,emit);
     }
-    bits.finish();
   }
   return wave;
 }

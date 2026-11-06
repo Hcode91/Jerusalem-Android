@@ -49,7 +49,9 @@ public class LoaderMilestone extends GhidraScript {
             "aseccomsoumono::decompressheader", "aseccomsoustereo::decompressheader",
             "aseccomaqi::decompressnode", "aseccomaqi::decompresschannel",
             "aimagefilecinema::readheader", "aart::init - can not read art header",
-            "aimagefiletgc::loadimage - readheader"
+            "aimagefiletgc::loadimage - readheader",
+            "arotation::alloc", "arotation::loadsave", "aapplication::rotsetact",
+            "caquatorimageheader::allocbuffer"
         };
         Map<String, Function> selected = new LinkedHashMap<>();
         DataIterator data = currentProgram.getListing().getDefinedData(true);

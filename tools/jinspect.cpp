@@ -6,7 +6,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -29,6 +29,18 @@ int main(int argc,char** argv) {
       std::cout << "directory_complete=" << art.directory_complete << " available=" << art.entries.size() << " declared=" << art.declared_count << '\n';
       for (const auto& e:art.entries)
         std::cout << e.name << '\t' << e.offset << '\t' << e.stored_size << '\t' << e.auxiliary_size << '\t' << e.payload_available << '\n';
+    } else if (mode=="decode-aqc") {
+      if (argc!=4) throw ParseError("AQC conversion requires a new output directory");
+      const auto info=parse_aqc(b);
+      const auto image=decode_aqc(b);
+      const std::filesystem::path root=argv[3];
+      if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
+      std::ofstream out(root/"decoded.ppm",std::ios::binary);
+      out << "P6\n" << image.width << ' ' << image.height << "\n255\n";
+      for (std::size_t i=0;i<image.rgba.size();i+=4)
+        out.write(reinterpret_cast<const char*>(image.rgba.data()+i),3);
+      if (!out) throw ParseError("failed writing decoded AQC image");
+      std::cout << "Static image decoded; " << info.tail_size << " trailing bytes remain undecoded\n";
     } else if (mode=="decode-audio") {
       if (argc!=4) throw ParseError("audio conversion requires a new output directory");
       const auto wave=decode_game_audio(b);
