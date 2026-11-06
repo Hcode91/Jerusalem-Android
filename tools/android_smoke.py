@@ -211,7 +211,7 @@ def synthetic_story_aqc():
     return bytes(result)
 
 
-def synthetic_cinema(frames=3):
+def synthetic_cinema(frames=3, preload_audio=False):
     """Independent progressive CNM with T/U/S frames and stereo raw PCM."""
     header = bytearray(192)
     header[:8] = b'CNM UNR\0'
@@ -232,6 +232,8 @@ def synthetic_cinema(frames=3):
     for i in range(frames):
         pcm = b''.join(struct.pack('<hh', int(4096*math.sin(2*math.pi*330*j/22050)),
                                   int(4096*math.sin(2*math.pi*550*j/22050))) for j in range(882))
+        if preload_audio:
+            pcm = pcm*frames if i == 0 else b''
         result += b'Z'+struct.pack('<I', len(pcm))+pcm
         fresh = i in (0, frames-1)
         if fresh:
@@ -542,7 +544,14 @@ def main():
         wait_for(lambda: b'Cinema frame: index=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native cinema preview did not advance')
         wait_for(lambda: b'Cinema preview decoded 100 frames.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Cinema did not reach EOF at its declared frame count')
         wait_for(lambda: b'Audio buffer drained: synthetic-movie.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Movie PCM did not reach SDL output')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        # Match AN004/AN007C: one preloaded soundtrack followed by valid zero-byte Z chunks.
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-preloaded.CI2'", input=synthetic_cinema(30, preload_audio=True))
+        adb('logcat', '-c'); click_scrolling('Browse assets'); click_list_item('synthetic-preloaded.CI2')
+        wait_for(lambda: b'Cinema preview decoded 30 frames.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Preloaded-soundtrack movie stopped on an empty PCM chunk')
+        wait_for(lambda: b'Audio buffer drained: synthetic-preloaded.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Preloaded soundtrack did not reach SDL output')
+        if b'Cinema preview stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
+            raise RuntimeError('Cinema emitted an error while playing the preloaded soundtrack fixture')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

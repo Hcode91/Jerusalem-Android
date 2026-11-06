@@ -114,8 +114,14 @@ class Audio {
   void cinema_pcm(const std::vector<std::uint8_t>& pcm) {
     std::lock_guard<std::mutex> guard(mutex_);
     if(!stream_ || !streaming_)throw jerusalem::ParseError("Cinema audio stream unavailable");
-    if(SDL_GetAudioStreamQueued(stream_)>4*1024*1024)throw jerusalem::ParseError("Cinema audio queue exceeds limit");
-    if(!SDL_PutAudioStreamData(stream_,pcm.data(),static_cast<int>(pcm.size())) || (!paused_ && !SDL_ResumeAudioStreamDevice(stream_)))throw jerusalem::ParseError(SDL_GetError());
+    // Valid CNM streams can preload the entire soundtrack, then carry empty Z chunks.
+    // SDL3 validates buf before len, so an empty vector must never reach its API.
+    if(pcm.empty())return;
+    const int queued=SDL_GetAudioStreamQueued(stream_);
+    if(queued<0)throw jerusalem::ParseError(std::string("Cinema audio queue: ")+SDL_GetError());
+    if(queued>4*1024*1024)throw jerusalem::ParseError("Cinema audio queue exceeds limit");
+    if(!SDL_PutAudioStreamData(stream_,pcm.data(),static_cast<int>(pcm.size())))throw jerusalem::ParseError(std::string("Cinema audio submit: ")+SDL_GetError());
+    if(!paused_ && !SDL_ResumeAudioStreamDevice(stream_))throw jerusalem::ParseError(std::string("Cinema audio resume: ")+SDL_GetError());
     pcm_bytes_+=pcm.size();duration_ms_=pcm_bytes_*1000/(pcm_rate_*pcm_frame_bytes_);
   }
   void finish_cinema() {
