@@ -2,6 +2,8 @@
 
 The user confirmed that the prior Android APK displays the original A01 oasis image on their device. This milestone adds a native perspective camera over that decoded image, drag-to-look controls, FOV zoom, a flat/360 toggle, and an SDL2 desktop viewer sharing the C++ camera/decoder core. The Android inspector retains its working SDL3 shell; no Android framework migration is included.
 
+Subsequent progress: the user confirmed the 360 camera on Android. [Milestone 6](aqc-animation-milestone-6.md) adds verified channel-frame decoding and explicit inspection preview for 18 nodes; the special A09 layout remains unresolved.
+
 ## Findings checked against original code
 
 | Address | Evidence |

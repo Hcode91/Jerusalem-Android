@@ -49,6 +49,10 @@ def camera_states(logs):
     return [tuple(map(float, match)) for match in re.findall(pattern, logs)]
 
 
+def preview_states(logs):
+    return [tuple(map(int, match)) for match in re.findall(rb'AQC preview frame: channel=(\d+) frame=(\d+)', logs)]
+
+
 def current_ui():
     adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
     return adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml')
@@ -62,6 +66,26 @@ def click(text):
             return True
         return False
     wait_for(locate, f'UI control not found: {text}')
+
+
+def click_scrolling(text):
+    for _ in range(6):
+        xml = current_ui()
+        center = control_center(xml, text)
+        if center is not None:
+            adb('shell', 'input', 'tap', str(center[0]), str(center[1]))
+            return
+        for node in ET.fromstring(xml).iter('node'):
+            if node.get('class') != 'android.widget.HorizontalScrollView':
+                continue
+            values = list(map(int, re.findall(r'\d+', node.get('bounds', ''))))
+            if len(values) == 4 and values[2]-values[0]>40 and values[3]>values[1]:
+                x1, y1, x2, y2 = values
+                adb('shell', 'input', 'swipe', str(x2-20), str((y1+y2)//2), str(x1+20), str((y1+y2)//2), '350')
+                break
+        else:
+            raise RuntimeError(f'No horizontal control row while locating {text}')
+    raise RuntimeError(f'Scrollable UI control not found: {text}')
 
 
 def collect_diagnostics():
@@ -122,6 +146,18 @@ def synthetic_aqc():
     return struct.pack('<I', len(indices)) + header + indices + struct.pack('<I', len(palette)) + palette
 
 
+def synthetic_animated_aqc():
+    base = synthetic_aqc()
+    def frame(left, top, index):
+        header = struct.pack('<III', 8, 4, 2) + base[16:32] + struct.pack('<6I', left, left+4, top, top+2, 16, 8)
+        bits = '0' + f'{index:013b}' + '11'
+        payload = int(bits, 2).to_bytes(2, 'big')
+        return struct.pack('<I', len(payload)) + header + payload
+    static = struct.pack('<IfI', 1, 0., 0) + frame(0, 0, 0)
+    animated = struct.pack('<IfI', 2, 12., 1) + frame(0, 1, 1) + frame(4, 2, 0)
+    return base + static + animated
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Android runtime smoke tests run only in GitHub Actions')
@@ -154,7 +190,7 @@ def main():
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-audio.wav'", input=audio.getvalue())
         for name, data in compressed_audio_fixtures().items():
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=data)
-        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-node.aqc'", input=synthetic_aqc())
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-node.aqc'", input=synthetic_animated_aqc())
         click('Browse assets')
         click('synthetic.bmp')
         click('Close')
@@ -208,7 +244,14 @@ def main():
         wait_for(lambda: any(abs((yaw-before+180)%360-180)>0.1 for yaw, _, _ in
                              camera_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
                  'Dragging did not change the panorama camera yaw')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        click_scrolling('Preview animation')
+        wait_for(lambda: len(set(preview_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))))>=2,
+                 'Original-format preview did not advance between synthetic frames')
+        (OUTPUT / 'aqc-animation-preview.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        click_scrolling('Preview animation')
+        wait_for(lambda: b'Animation preview off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Animation preview did not switch off')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

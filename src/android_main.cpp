@@ -1,5 +1,6 @@
 #include "jerusalem/resources.hpp"
 #include "jerusalem/panorama.hpp"
+#include "jerusalem/aqc_animation.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -10,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <utility>
 
 namespace {
 std::mutex bridge_mutex;
@@ -102,6 +104,11 @@ class Renderer {
   jerusalem::Camera camera_{};
   bool camera_mode_=false, camera_dirty_=false;
   int camera_width_=0,camera_height_=0;
+  std::unique_ptr<jerusalem::AqcPreview> animation_;
+  std::string animation_error_;
+  std::optional<jerusalem::Camera> saved_camera_;
+  bool saved_camera_mode_=false;
+  Uint64 animation_tick_=0;
   int width_=0,height_=0;
   float zoom_=1,pan_x_=0,pan_y_=0;
   std::string preview_;
@@ -117,6 +124,7 @@ class Renderer {
     if (texture_) SDL_DestroyTexture(texture_);
     if (camera_texture_) SDL_DestroyTexture(camera_texture_);
     texture_=camera_texture_=nullptr; panorama_={}; camera_mode_=false;
+    animation_.reset(); animation_error_.clear(); saved_camera_.reset();
     camera_width_=camera_height_=0;
   }
   void fit() { zoom_=1; pan_x_=pan_y_=0; camera_={}; camera_dirty_=true; }
@@ -132,6 +140,30 @@ class Renderer {
     if (panorama_.rgba.empty()) { report("Choose an AQC panorama before switching views."); return; }
     camera_mode_=!camera_mode_; camera_dirty_=true;
     report(camera_mode_ ? "360 panorama view. Drag to look around; Zoom changes the field of view." : "Flat image view. Drag to pan; use Fit image / Zoom.");
+  }
+  void load_channels(std::vector<std::uint8_t> bytes) {
+    if (panorama_.rgba.empty()) { animation_error_="Channel preview requires supported panorama geometry."; return; }
+    try { animation_=std::make_unique<jerusalem::AqcPreview>(std::move(bytes),panorama_); }
+    catch (const jerusalem::ParseError& e) { animation_error_=e.what(); }
+    animation_tick_=SDL_GetTicks();
+  }
+  void reset_animation_clock() { animation_tick_=SDL_GetTicks(); }
+  void preview_animation() {
+    if (!animation_) { report(animation_error_.empty() ? "Open a complete AQC before previewing animation." : animation_error_); return; }
+    const bool was_active=animation_->channel().has_value();
+    if (animation_->next()) {
+      if (!was_active) { saved_camera_=camera_; saved_camera_mode_=camera_mode_; }
+      const auto& rect=animation_->selected()->frames.front();
+      camera_.yaw=(rect.left+rect.width/2.0)/geometry_.width*360-180;
+      camera_.pitch=(rect.top+rect.height/2.0)/geometry_.height*(geometry_.pitch_max-geometry_.pitch_min)+geometry_.pitch_min;
+      camera_.fov=30; camera_mode_=true;
+      report("Animation preview: channel "+std::to_string(*animation_->channel()+1)+", "+
+             std::to_string(animation_->selected()->frames.size())+" frames at 12 fps preview speed. Tap Preview animation to cycle/off. Game triggers are not implemented.");
+    } else {
+      if (saved_camera_) { camera_=*saved_camera_; camera_mode_=saved_camera_mode_; saved_camera_.reset(); }
+      report("Animation preview off. The original static panorama is restored.");
+    }
+    reset_animation_clock(); camera_dirty_=true;
   }
   void preview(const std::string& text) {
     preview_=text.substr(0,8192);
@@ -152,6 +184,17 @@ class Renderer {
     panorama_=std::move(image); geometry_=geometry; camera_mode_=true; camera_dirty_=true;
   }
   void draw(const std::string& message) {
+    if (animation_) {
+      const auto now=SDL_GetTicks();
+      const auto delta=now-animation_tick_; animation_tick_=now;
+      if (animation_->update(panorama_,delta)) {
+        if (!SDL_UpdateTexture(texture_,nullptr,panorama_.rgba.data(),width_*4))
+          throw jerusalem::ParseError(std::string("Animation upload: ")+SDL_GetError());
+        camera_dirty_=true;
+        if (animation_->channel())
+          __android_log_print(ANDROID_LOG_INFO,"Jerusalem","AQC preview frame: channel=%zu frame=%zu",*animation_->channel(),*animation_->frame());
+      }
+    }
     int w=0,h=0; SDL_GetRenderOutputSize(renderer_,&w,&h);
     SDL_SetRenderDrawColor(renderer_,17,23,30,255); SDL_RenderClear(renderer_);
     if (texture_ && w>0 && h>220) {
@@ -218,6 +261,7 @@ class InspectionScene {
         catch (const jerusalem::ParseError&) { /* The static image remains supported. */ }
         if (geometry) renderer_.panorama(std::move(image),*geometry);
         else renderer_.bitmap(image);
+        renderer_.load_channels(std::move(data));
       }
       else if (description.kind==jerusalem::ResourceKind::Wave || description.kind==jerusalem::ResourceKind::CompressedAudio)
         audio_.play(b,path.filename().string());
@@ -260,7 +304,7 @@ Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,js
 }
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeCommand(JNIEnv*,jclass,jint command) {
-  if (command<1 || command>5) return;
+  if (command<1 || command>6) return;
   std::lock_guard<std::mutex> guard(bridge_mutex); commands|=1U<<command;
 }
 extern "C" JNIEXPORT jstring JNICALL
@@ -286,8 +330,8 @@ int main(int,char**) {
       SDL_Event event;
       while (SDL_PollEvent(&event)) {
         if (event.type==SDL_EVENT_QUIT) running=false;
-        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; audio.pause(true); }
-        else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { background=false; audio.pause(false); }
+        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; audio.pause(true); renderer.reset_animation_clock(); }
+        else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { background=false; audio.pause(false); renderer.reset_animation_clock(); }
         else if (event.type==SDL_EVENT_FINGER_MOTION) renderer.pan(event.tfinger.dx,event.tfinger.dy);
         else if (event.type==SDL_EVENT_MOUSE_BUTTON_DOWN) dragging=true;
         else if (event.type==SDL_EVENT_MOUSE_BUTTON_UP) dragging=false;
@@ -306,6 +350,7 @@ int main(int,char**) {
       if (action&(1U<<3)) renderer.zoom(0.8f);
       if (action&(1U<<4)) { audio.stop(); report("Audio stopped."); }
       if (action&(1U<<5)) renderer.toggle_camera();
+      if (action&(1U<<6)) renderer.preview_animation();
       if (!background) audio.update();
       if (!background) {
         try { renderer.draw(message); }
