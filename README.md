@@ -42,7 +42,7 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-The first development pass passed host parsing tests against synthetic cases and the supplied AT3/DAN/localization samples. The target repository is Hcode91/Jerusalem-Android. **Actions build and Android device launch status will be recorded after CI validation.** The first milestone is not complete until those checks pass. This repository does not claim original scene playback.
+Host validation passed CMake/CTest, 761 C++ checks with private original-data checks enabled, 4000 deterministic malformed-input rounds, and ten Python regression tests. Complete original archives were extracted and 30 original WAVs parsed. The target repository is Hcode91/Jerusalem-Android. **Actions build and Android device launch status will be recorded after CI validation.** The first milestone is not complete until those checks pass. This repository does not claim original scene playback.
 
 ## Roadmap
 

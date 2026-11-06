@@ -8,7 +8,7 @@ The host job configures CMake, compiles the parsers, and runs CTest with ASan/UB
 
 The workflow builds `:app:assembleDebug` and runs `:app:lintDebug`, verifies ARM64 ELF libraries inside the APK, and uploads **jerusalem-native-arm64-debug**. Download and unzip that artifact, transfer `app-debug.apk` to an ARM64 Android 8.0+ device, and install it. It uses the standard Android debug signing key. No release publication or signing credentials are needed.
 
-Build failures are fatal. Test reports and available Android logs/lint reports are uploaded even on failure. An APK is uploaded only after a successful build and packaging check. The workflow does not assert that packaging proves device launch or that a launched inspector proves game compatibility.
+Build failures are fatal. Test reports and available Android logs/lint reports are uploaded even on failure. An APK is uploaded only after a successful build and packaging check. CI also compiles an x86_64 APK exclusively for an Android API 29 emulator smoke test. That test verifies native startup, JNI inspection, and display of an independently generated synthetic BMP, and uploads screenshot/log evidence. The downloadable APK artifact remains ARM64. Emulator success does not establish ARM64 hardware compatibility or original gameplay.
 
 No APK or Android native builds have been run locally. The workflow target is `Hcode91/Jerusalem-Android`; see the validation status in the README and pull request for observed CI results.
 
@@ -36,4 +36,4 @@ This remains pending until an Actions-built APK is available:
 - Rotate the device, open/close the folder picker, background/foreground, deny picker selection, and import an invalid/truncated file.
 - Confirm no Windows binary or proprietary test data appears in the APK.
 
-An ARM64 device launch has not been observed in this pass. A CI green check must not be reported as gameplay success.
+An ARM64 hardware launch has not been observed in this pass. The emulator test and its evidence cover x86_64 startup and synthetic image inspection only. A CI green check must not be reported as gameplay success.
