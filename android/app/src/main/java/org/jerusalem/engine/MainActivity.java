@@ -61,6 +61,8 @@ public class MainActivity extends SDLActivity {
     private static native void nativeCommand(int command);
     private static native String nativeStatus();
     private static native String nativeInventory();
+    private static native String nativeInventoryOptions();
+    private static native void nativeCombine(int first, int second);
     private static native byte[] nativeExtractA01(byte[] program);
 
     @Override protected String[] getLibraries() { return new String[] {"SDL3", "main"}; }
@@ -102,7 +104,7 @@ public class MainActivity extends SDLActivity {
         });
         navigation.setOnLongClickListener(v -> { if (!importing) chooseNavigationSource(); return true; });
         buttons.addView(navigation);
-        buttons.addView(button("Inventory", v -> showText("Inventory", nativeInventory())));
+        buttons.addView(button("Inventory", v -> showInventory()));
         buttons.addView(button("Save checkpoint", v -> { if (!importing) nativeCommand(9); }));
         buttons.addView(button("Load checkpoint", v -> { if (!importing) nativeCommand(10); }));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
@@ -124,6 +126,37 @@ public class MainActivity extends SDLActivity {
         button.setText(label); button.setAllCaps(false); button.setContentDescription(label);
         button.setMinHeight(48); button.setOnClickListener(action);
         return button;
+    }
+
+    private void showInventory() {
+        new AlertDialog.Builder(this).setTitle("Inventory").setMessage(nativeInventory())
+                .setPositiveButton("Combine items", (dialog, which) -> chooseIngredients())
+                .setNegativeButton("Close", null).show();
+    }
+
+    private void chooseIngredients() {
+        if (importing) return;
+        String raw = nativeInventoryOptions();
+        if (raw.isEmpty()) { showText("Combine items", "Collect at least two items first."); return; }
+        String[] entries = raw.trim().split("\n");
+        if (entries.length < 2) { showText("Combine items", "Collect at least two items first."); return; }
+        int[] ids = new int[entries.length];
+        String[] labels = new String[entries.length];
+        for (int i = 0; i < entries.length; ++i) {
+            String[] fields = entries[i].split("\t", 2);
+            if (fields.length != 2) return;
+            ids[i] = Integer.parseInt(fields[0]); labels[i] = fields[1];
+        }
+        new AlertDialog.Builder(this).setTitle("First ingredient").setItems(labels, (dialog, first) -> {
+            String[] others = new String[labels.length - 1];
+            int[] otherIds = new int[others.length];
+            for (int i = 0, j = 0; i < labels.length; ++i) if (i != first) {
+                others[j] = labels[i]; otherIds[j++] = ids[i];
+            }
+            new AlertDialog.Builder(this).setTitle("Combine " + labels[first] + " with…")
+                    .setItems(others, (secondDialog, second) -> nativeCombine(ids[first], otherIds[second]))
+                    .setNegativeButton("Cancel", null).show();
+        }).setNegativeButton("Cancel", null).show();
     }
 
     private void showText(String title, String message) {

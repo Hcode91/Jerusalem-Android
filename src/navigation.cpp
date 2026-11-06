@@ -201,6 +201,13 @@ SceneGraph extract_a01_navigation(Bytes b) {
     g.items.push_back(item);
   }
   if(g.items.size()!=3) throw ParseError("incomplete supported collectible setup");
+  // The fingerprint above pins the dispatch and its symmetric argument checks.
+  const auto combination_calls=packet(0x44b6b8,0x44b6dc);
+  if(combination_calls.size()!=3 || combination_calls[0].target!=0x42c460 || combination_calls[1].target!=0x42c460 || combination_calls[2].target!=0x42c3a0 ||
+     combination_calls[0].arguments.size()!=1 || combination_calls[1].arguments.size()!=1 || combination_calls[2].arguments.size()!=1) throw ParseError("unsupported inventory combination effects");
+  Combination combination{combination_calls[0].arguments[0],combination_calls[1].arguments[0],combination_calls[2].arguments[0],""};
+  for(const auto& call:packet(0x47e5af,0x47e5c7)) if(call.target==0x429700 && call.arguments.size()==4 && call.arguments[0]==combination.result && call.arguments[3]==1) combination.name=pe.label(call.arguments[1]);
+  g.combinations.push_back(std::move(combination));
   validate_navigation(g);
   return g;
 }
@@ -248,6 +255,15 @@ void validate_navigation(const SceneGraph& g) {
     for(const auto& b:item.channels) if(b.channel>=scene_node(g,b.node).channels || !bound.insert({b.node,b.channel}).second)
       throw ParseError("invalid/duplicate collectible channel binding");
   }
+  if(g.combinations.size()>16)throw ParseError("too many inventory combinations");
+  std::set<std::uint32_t> results;
+  std::set<std::pair<std::uint32_t,std::uint32_t>> pairs;
+  for(const auto& c:g.combinations) {
+    // This milestone supports consuming pairs of original pickups, without chaining.
+    if(!item_ids.count(c.first) || !item_ids.count(c.second) || c.first==c.second || !c.result || c.result>0x7fffffffU || item_ids.count(c.result) ||
+       !results.insert(c.result).second || !pairs.insert(std::minmax(c.first,c.second)).second || c.name.empty() || c.name.size()>95)throw ParseError("invalid inventory combination");
+    for(unsigned char ch:c.name)if(ch<32 || ch>126)throw ParseError("unsupported combination label encoding");
+  }
   for (const auto& e:g.exits) {
     scene_node(g,e.source); if (!e.puzzle) scene_node(g,e.target);
     if (!e.target || e.target>0x7fffffffU || e.cursor>0x7fffffffU || e.event>0x7fffffffU ||
@@ -262,7 +278,7 @@ void validate_navigation(const SceneGraph& g) {
 
 std::string write_navigation(const SceneGraph& g) {
   validate_navigation(g);
-  std::ostringstream out; out.imbue(std::locale::classic()); out << (!g.items.empty()?"JERUSALEM_A01_NAV_V3\n":g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
+  std::ostringstream out; out.imbue(std::locale::classic()); out << (!g.combinations.empty()?"JERUSALEM_A01_NAV_V4\n":!g.items.empty()?"JERUSALEM_A01_NAV_V3\n":g.ambient.empty()?"JERUSALEM_A01_NAV_V1\n":"JERUSALEM_A01_NAV_V2\n") << std::setprecision(12);
   for (const auto& n:g.nodes) out << "node " << n.id << ' ' << n.asset << ' ' << n.channels << '\n';
   for (const auto& e:g.exits)
     out << "exit " << e.source << ' ' << e.slot << ' ' << e.target << ' ' << e.puzzle << ' ' << e.enabled << ' '
@@ -274,13 +290,14 @@ std::string write_navigation(const SceneGraph& g) {
         << item.cursor << ' ' << item.event << ' ' << item.counter << ' ' << item.milestone << ' ' << std::quoted(item.name) << '\n';
     for(const auto& b:item.channels) out << "item-channel " << item.id << ' ' << b.node << ' ' << b.channel << '\n';
   }
+  for(const auto& c:g.combinations)out << "combine " << c.first << ' ' << c.second << ' ' << c.result << ' ' << std::quoted(c.name) << '\n';
   return out.str();
 }
 SceneGraph parse_navigation(const std::string& text) {
   if (text.size()>128*1024) throw ParseError("navigation model exceeds 128 KiB limit");
   std::istringstream lines(text); std::string line;
-  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2" && line!="JERUSALEM_A01_NAV_V3")) throw ParseError("not a native A01 navigation model");
-  const bool items=line=="JERUSALEM_A01_NAV_V3",audio=items || line=="JERUSALEM_A01_NAV_V2";
+  if (!std::getline(lines,line) || (line!="JERUSALEM_A01_NAV_V1" && line!="JERUSALEM_A01_NAV_V2" && line!="JERUSALEM_A01_NAV_V3" && line!="JERUSALEM_A01_NAV_V4")) throw ParseError("not a native A01 navigation model");
+  const bool combinations=line=="JERUSALEM_A01_NAV_V4",items=combinations || line=="JERUSALEM_A01_NAV_V3",audio=items || line=="JERUSALEM_A01_NAV_V2";
   SceneGraph g;
   while (std::getline(lines,line)) {
     if (line.empty()) continue;
@@ -300,6 +317,10 @@ SceneGraph parse_navigation(const std::string& text) {
       if (!(row>>a.node>>a.sound>>a.volume>>a.stem) || (row>>extra) || g.ambient.size()>=192)
         throw ParseError("invalid ambient model row");
       g.ambient.push_back(std::move(a));
+    } else if(kind=="combine" && combinations) {
+      Combination c{};
+      if(!(row>>c.first>>c.second>>c.result>>std::quoted(c.name)) || (row>>extra) || g.combinations.size()>=16)throw ParseError("invalid combination row");
+      g.combinations.push_back(std::move(c));
     } else if(kind=="item" && items) {
       Collectible item{};
       if(!(row>>item.id>>item.node>>item.left>>item.top>>item.right>>item.bottom>>item.cursor>>item.event>>item.counter>>item.milestone>>std::quoted(item.name)) || (row>>extra) || g.items.size()>=16) throw ParseError("invalid collectible row");

@@ -193,4 +193,9 @@ The user confirmed scene audio/lifecycle operation. [Milestone 9](a01-pickups-mi
 
 ## Independent native preview persistence
 
-The user confirmed the three supported A01 pickups and inventory. [Milestone 10](native-checkpoints-milestone-10.md) adds a new native checkpoint format for current node, camera and ordered pickups. It rebuilds verified state by replaying independent pickup effects and checks model/data compatibility, exact lengths, CRC32 and field bounds. This introduces no claim about original `.ARS` layout or unimplemented story state. Android and Linux SDL2 expose save/load; eight host groups pass, including 403 new checkpoint checks and private six-node state/pixel restoration. New Android runtime results remain pending.
+The user confirmed the three supported A01 pickups and inventory. [Milestone 10](native-checkpoints-milestone-10.md) adds a new native checkpoint format for current node, camera and ordered pickups. It rebuilds verified state by replaying independent pickup effects and checks model/data compatibility, exact lengths, CRC32 and field bounds. This introduces no claim about original `.ARS` layout or unimplemented story state. Android and Linux SDL2 expose save/load; eight host groups pass, including 403 new checkpoint checks and private six-node state/pixel restoration. The user subsequently confirmed native save/load works on Android.
+
+
+## A01 inventory handler and native combination
+
+[Milestone 11](a01-combinations-milestone-11.md) traces 0044b680 and extracts the verified symmetric harness/stone combination. Calls at 0044b6b8..0044b6dc remove 10002 and 10004 and add 10017, whose declaration/label comes from 0047e5af..0047e5c7. An isolated original-handler comparison matches 36 supported-domain argument pairs. Independent native code implements ownership checks, consumption and result insertion with V4 data, Android ingredient dialogs and checkpoint action replay. Host tests pass; new Android results are pending. Bowl/jug effects and palm/character state remain distinct unsupported cases rather than guessed generalizations.

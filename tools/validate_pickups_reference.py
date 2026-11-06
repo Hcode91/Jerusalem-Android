@@ -57,8 +57,8 @@ def trace(read, start, value):
 def validate(executable, model):
     _, read = capture(executable)  # Checks the exact analyzed executable SHA-256.
     lines = model.splitlines()
-    if not lines or lines[0] != 'JERUSALEM_A01_NAV_V3':
-        raise ValueError('require a native V3 model extracted by jinspect')
+    if not lines or lines[0] not in ('JERUSALEM_A01_NAV_V3', 'JERUSALEM_A01_NAV_V4'):
+        raise ValueError('require a native V3/V4 model extracted by jinspect')
     items = {}
     for line in lines[1:]:
         row = shlex.split(line)

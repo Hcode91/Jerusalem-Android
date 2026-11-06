@@ -27,6 +27,8 @@ std::mutex bridge_mutex;
 std::string pending_path;
 std::string diagnostic="Native inspector starting. No game scene has been decoded.";
 unsigned commands=0;
+std::vector<std::pair<std::uint32_t,std::uint32_t>> pending_combinations;
+std::string inventory_options;
 std::string inventory_report="Start A01 navigation to inspect the pickup inventory.";
 
 void report(const std::string& text) {
@@ -412,21 +414,29 @@ class InspectionScene {
         const auto data=jerusalem::read_file(file.path());const auto labels=jerusalem::parse_localized(std::string(data.begin(),data.end()));
         for(auto& item:graph.items) for(const auto& label:labels) if(label.key==std::to_string(item.id) && label.language=="ENG" && !label.title.empty() && label.title.size()<96 &&
             std::all_of(label.title.begin(),label.title.end(),[](unsigned char c){return c>=32 && c<=126;})) {item.name=label.title;break;}
+        for(auto& c:graph.combinations) for(const auto& label:labels) if(label.key==std::to_string(c.result) && label.language=="ENG" && !label.title.empty() && label.title.size()<96 &&
+            std::all_of(label.title.begin(),label.title.end(),[](unsigned char ch){return ch>=32 && ch<=126;})) {c.name=label.title;break;}
       } catch(const std::exception& e) {__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Item labels unavailable: %s",e.what());}
     }
     return {std::move(graph),std::move(assets)};
   }
   void publish_inventory(const jerusalem::InteractionState* state=nullptr) {
     if (!state) state=interactions_.get();
-    std::ostringstream out;
+    std::ostringstream out,options;
     if (!navigation_ || !state) out << "Start A01 navigation to view the pickup inventory.";
     else if(navigation_->items.empty()) out << "Pickup support needs refreshed connections: long-press A01 navigation and select the original executable again.";
     else {
       out << "Collected items: " << state->inventory().size() << '\n';
-      for (const auto id:state->inventory()) out << "- " << jerusalem::collectible(*navigation_,id).name << " [" << id << "]\n";
-      out << "\nItem use and combinations are not available yet. Save checkpoint keeps your node, view and pickups. Load checkpoint restores them after leaving navigation or reopening the app. Original Windows saves are not supported.";
+      for (const auto id:state->inventory()) {
+        const auto name=jerusalem::inventory_name(*navigation_,id);
+        out << "- " << name << " [" << id << "]\n";
+        options << id << '\t' << name << '\n';
+      }
+      if(navigation_->combinations.empty())out << "\nCombinations need refreshed connections: long-press A01 navigation and select the original executable again.";
+      else out << "\nChoose Combine items to select two ingredients. Character interactions are not implemented.";
+      out << "\nSave checkpoint keeps your node, view, pickups and combinations. Original Windows saves are not supported.";
     }
-    std::lock_guard<std::mutex> guard(bridge_mutex);inventory_report=out.str();
+    std::lock_guard<std::mutex> guard(bridge_mutex);inventory_report=out.str();inventory_options=options.str();
   }
   void enter(std::uint32_t id,jerusalem::Camera camera,const jerusalem::InteractionState* next=nullptr) {
     const auto& node=jerusalem::scene_node(*navigation_,id);
@@ -503,16 +513,26 @@ class InspectionScene {
       report(std::string("A01 traversal unavailable: ")+e.what());
     }
   }
+  void combine(std::uint32_t first,std::uint32_t second) {
+    if(!navigation_ || !interactions_ || !node_) {report("Start A01 navigation before combining items.");return;}
+    try {
+      if(navigation_->combinations.empty())throw jerusalem::ParseError("refresh connections by long-pressing A01 navigation and selecting the original executable");
+      const auto result=interactions_->combine(first,second);
+      if(!result) {report("These items have no supported combination, or are no longer in inventory.");return;}
+      publish_inventory();report("Combined: "+jerusalem::inventory_name(*navigation_,*result)+" ["+std::to_string(*result)+"]. Open Inventory to inspect it.");
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Combination state: first=%u second=%u result=%u inventory=%zu",first,second,*result,interactions_->inventory().size());
+    }catch(const std::exception& e){report(std::string("Combination unavailable: ")+e.what());}
+  }
   void save_checkpoint() {
     try {
       if(!node_ || !navigation_ || !interactions_ || navigation_->items.empty())
         throw jerusalem::ParseError("start A01 navigation with pickup connections before saving");
       report("Saving checkpoint...");
-      const jerusalem::Checkpoint checkpoint{*node_,renderer_.checkpoint_camera(),interactions_->inventory()};
+      const jerusalem::Checkpoint checkpoint{*node_,renderer_.checkpoint_camera(),interactions_->history()};
       const auto assets=jerusalem::checkpoint_assets(*navigation_,assets_);
       jerusalem::write_checkpoint(checkpoint_path(),*navigation_,assets,checkpoint);
-      report("Checkpoint saved at "+jerusalem::scene_node(*navigation_,*node_).asset+" with "+std::to_string(checkpoint.inventory.size())+" item(s).");
-      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Checkpoint state: action=save node=%u yaw=%.6f pitch=%.6f fov=%.6f inventory=%zu",checkpoint.node,checkpoint.camera.yaw,checkpoint.camera.pitch,checkpoint.camera.fov,checkpoint.inventory.size());
+      report("Checkpoint saved at "+jerusalem::scene_node(*navigation_,*node_).asset+" with "+std::to_string(interactions_->inventory().size())+" item(s).");
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Checkpoint state: action=save node=%u yaw=%.6f pitch=%.6f fov=%.6f inventory=%zu",checkpoint.node,checkpoint.camera.yaw,checkpoint.camera.pitch,checkpoint.camera.fov,interactions_->inventory().size());
     }catch(const std::exception& e){report(std::string("Checkpoint save failed: ")+e.what());}
   }
   void load_checkpoint() {
@@ -532,8 +552,8 @@ class InspectionScene {
         navigation_=std::move(old_graph);assets_=std::move(old_assets);interactions_=std::move(old_state);
         node_=old_node;selected_asset_=old_selected;publish_inventory();throw;
       }
-      report("Checkpoint loaded at "+jerusalem::scene_node(*navigation_,checkpoint.node).asset+" with "+std::to_string(checkpoint.inventory.size())+" item(s).");
-      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Checkpoint state: action=load node=%u yaw=%.6f pitch=%.6f fov=%.6f inventory=%zu",checkpoint.node,checkpoint.camera.yaw,checkpoint.camera.pitch,checkpoint.camera.fov,checkpoint.inventory.size());
+      report("Checkpoint loaded at "+jerusalem::scene_node(*navigation_,checkpoint.node).asset+" with "+std::to_string(interactions_->inventory().size())+" item(s).");
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Checkpoint state: action=load node=%u yaw=%.6f pitch=%.6f fov=%.6f inventory=%zu",checkpoint.node,checkpoint.camera.yaw,checkpoint.camera.pitch,checkpoint.camera.fov,interactions_->inventory().size());
     }catch(const std::exception& e){report(std::string("Checkpoint load failed: ")+e.what());}
   }
   void tap(float x,float y) {
@@ -639,6 +659,16 @@ Java_org_jerusalem_engine_MainActivity_nativeInventory(JNIEnv* env,jclass) {
   std::lock_guard<std::mutex> guard(bridge_mutex);return env->NewStringUTF(inventory_report.c_str());
 }
 extern "C" JNIEXPORT jstring JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeInventoryOptions(JNIEnv* env,jclass) {
+  std::lock_guard<std::mutex> guard(bridge_mutex);return env->NewStringUTF(inventory_options.c_str());
+}
+extern "C" JNIEXPORT void JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeCombine(JNIEnv*,jclass,jint first,jint second) {
+  if(first<=0 || second<=0 || first==second)return;
+  std::lock_guard<std::mutex> guard(bridge_mutex);
+  if(pending_combinations.size()<8)pending_combinations.emplace_back(first,second);
+}
+extern "C" JNIEXPORT jstring JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeStatus(JNIEnv* env,jclass) {
   std::lock_guard<std::mutex> guard(bridge_mutex); return env->NewStringUTF(diagnostic.c_str());
 }
@@ -690,9 +720,10 @@ int main(int,char**) {
         else if (event.type==SDL_EVENT_RENDER_DEVICE_RESET) { renderer.clear_image(); report("Graphics device reset. Reopen asset from Browse."); }
       }
       std::string path,message; unsigned action;
+      std::vector<std::pair<std::uint32_t,std::uint32_t>> combinations;
       {
         std::lock_guard<std::mutex> guard(bridge_mutex);
-        path.swap(pending_path); action=commands; commands=0; message=diagnostic;
+        path.swap(pending_path);combinations.swap(pending_combinations); action=commands; commands=0; message=diagnostic;
       }
       if (!path.empty()) { scene.open(path); if (lifecycle.background()) audio.pause(true); }
       if (action&(1U<<1)) renderer.fit();
@@ -703,6 +734,7 @@ int main(int,char**) {
       if (action&(1U<<6)) renderer.preview_animation();
       if (action&(1U<<7)) scene.toggle_navigation();
       if (action&(1U<<8)) scene.toggle_navigation(true);
+      for(const auto& pair:combinations)scene.combine(pair.first,pair.second);
       if (action&(1U<<9)) scene.save_checkpoint();
       if (action&(1U<<10)) scene.load_checkpoint();
       if (!lifecycle.background()) audio.update();

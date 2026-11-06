@@ -42,8 +42,22 @@ bool InteractionState::pickup(std::uint32_t id) {
   // Original presentation hide writes channel flags directly, including shared channels.
   for(const auto& binding:item.channels) visibility_.at(binding.node)[binding.channel]=false;
   variables_.at(item.counter)=static_cast<std::uint8_t>(variables_.at(item.counter)+1);
-  collected_.insert(id);inventory_.push_back(id);milestones_.insert(item.milestone);
+  collected_.insert(id);inventory_.push_back(id);history_.push_back(id);milestones_.insert(item.milestone);
   return true;
+}
+std::string inventory_name(const SceneGraph& graph,std::uint32_t id) {
+  for(const auto& rule:graph.combinations) if(rule.result==id)return rule.name;
+  return collectible(graph,id).name;
+}
+std::optional<std::uint32_t> InteractionState::combine(std::uint32_t first,std::uint32_t second) {
+  const auto owns=[&](std::uint32_t id){return std::find(inventory_.begin(),inventory_.end(),id)!=inventory_.end();};
+  if(first==second || !owns(first) || !owns(second))return std::nullopt;
+  for(const auto& rule:graph_.combinations) if((first==rule.first && second==rule.second) || (first==rule.second && second==rule.first)) {
+    if(owns(rule.result))return std::nullopt;
+    inventory_.erase(std::remove_if(inventory_.begin(),inventory_.end(),[&](std::uint32_t id){return id==first || id==second;}),inventory_.end());
+    inventory_.push_back(rule.result);history_.push_back(0x80000000U|rule.result);return rule.result;
+  }
+  return std::nullopt;
 }
 const std::vector<bool>& InteractionState::visibility(std::uint32_t node) const {scene_node(graph_,node);return visibility_.at(node);}
 std::uint8_t InteractionState::variable(std::uint32_t key) const {

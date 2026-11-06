@@ -13,17 +13,23 @@
 
 int main(int argc,char** argv) {
   try {
-    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview] [--navigation MODEL] [--checkpoint FILE] [--load-checkpoint] [--save-checkpoint]");
+    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview] [--navigation MODEL] [--checkpoint FILE] [--load-checkpoint] [--save-checkpoint] [--combine FIRST SECOND]");
     std::optional<unsigned long> limit;
     bool start_preview=false;
     std::optional<std::filesystem::path> navigation_file,checkpoint_file;
     bool load_start=false,save_start=false;
+    std::optional<std::uint32_t> ingredient;
+    std::optional<std::pair<std::uint32_t,std::uint32_t>> combine_start;
     for (int i=2;i<argc;++i) {
       if (std::string(argv[i])=="--preview") start_preview=true;
       else if (std::string(argv[i])=="--navigation" && i+1<argc) navigation_file=argv[++i];
       else if (std::string(argv[i])=="--checkpoint" && i+1<argc) checkpoint_file=argv[++i];
       else if (std::string(argv[i])=="--load-checkpoint") load_start=true;
       else if (std::string(argv[i])=="--save-checkpoint") save_start=true;
+      else if (std::string(argv[i])=="--combine" && i+2<argc) {
+        const auto parse_id=[](const std::string& text){std::size_t end=0;const auto value=std::stoul(text,&end);if(end!=text.size() || !value || value>0x7fffffffUL)throw jerusalem::ParseError("invalid ingredient ID");return static_cast<std::uint32_t>(value);};
+        const auto first=parse_id(argv[++i]);const auto second=parse_id(argv[++i]);combine_start=std::pair{first,second};
+      }
       else if (std::string(argv[i])=="--frames" && i+1<argc) {
         limit=std::stoul(argv[++i]);
         if (*limit==0) throw jerusalem::ParseError("frame limit must be positive");
@@ -97,25 +103,31 @@ int main(int argc,char** argv) {
       auto next_preview=std::make_unique<jerusalem::AqcPreview>(std::move(bytes),image);
       source=std::move(image);geometry=next_geometry;preview=std::move(next_preview);
       if(next)interactions=std::move(next);
-      current=target;camera=arrival;saved_camera.reset();preview_tick=SDL_GetTicks();dirty=true;
+      current=target;camera=arrival;ingredient.reset();saved_camera.reset();preview_tick=SDL_GetTicks();dirty=true;
       const auto title=jerusalem::scene_node(*navigation,current).asset+" / pickup preview; I inventory, F5 save, F9 load";
       SDL_SetWindowTitle(window.get(),title.c_str());
     };
     const auto save_checkpoint=[&] {
       if(!checkpoint_file || !navigation || !interactions) throw jerusalem::ParseError("use --navigation MODEL --checkpoint FILE for saving");
       const auto view=jerusalem::constrain_camera(geometry,camera,texture_width>0?texture_width:640,texture_height>0?texture_height:448);
-      const jerusalem::Checkpoint cp{current,view,interactions->inventory()};
+      const jerusalem::Checkpoint cp{current,view,interactions->history()};
       jerusalem::write_checkpoint(*checkpoint_file,*navigation,jerusalem::checkpoint_assets(*navigation,scene_assets),cp);
-      std::cout << "Checkpoint saved: node=" << current << " inventory=" << cp.inventory.size() << '\n';
+      std::cout << "Checkpoint saved: node=" << current << " inventory=" << interactions->inventory().size() << '\n';
     };
     const auto load_checkpoint=[&] {
       if(!checkpoint_file || !navigation) throw jerusalem::ParseError("use --navigation MODEL --checkpoint FILE for loading");
       const auto cp=jerusalem::read_checkpoint(*checkpoint_file,*navigation,jerusalem::checkpoint_assets(*navigation,scene_assets));
       auto next=std::make_unique<jerusalem::InteractionState>(jerusalem::restore_interactions(*navigation,cp));
       enter(cp.node,cp.camera,std::move(next));
-      std::cout << "Checkpoint loaded: node=" << current << " inventory=" << cp.inventory.size() << '\n';
+      std::cout << "Checkpoint loaded: node=" << current << " inventory=" << interactions->inventory().size() << '\n';
     };
     if(load_start)load_checkpoint();
+    if(combine_start) {
+      if(!interactions)throw jerusalem::ParseError("combination requires navigation");
+      const auto result=interactions->combine(combine_start->first,combine_start->second);
+      if(!result)throw jerusalem::ParseError("no supported combination for owned ingredients");
+      std::cout << "Combined: " << jerusalem::inventory_name(*navigation,*result) << '\n';
+    }
     if(save_start)save_checkpoint();
     if(start_preview)cycle_preview();
     bool mouse_moved=false; int mouse_start_x=0,mouse_start_y=0;
@@ -155,10 +167,23 @@ int main(int argc,char** argv) {
             try {if(event.key.keysym.sym==SDLK_F5)save_checkpoint();else load_checkpoint();}
             catch(const std::exception& e){std::cerr << "Checkpoint error: " << e.what() << '\n';}
           }
+          if(event.key.keysym.sym>=SDLK_1 && event.key.keysym.sym<=SDLK_9 && interactions) {
+            const auto index=static_cast<std::size_t>(event.key.keysym.sym-SDLK_1);
+            if(index<interactions->inventory().size()) {
+              const auto id=interactions->inventory()[index];
+              if(!ingredient) {ingredient=id;std::cout << "First ingredient: " << jerusalem::inventory_name(*navigation,id) << '\n';}
+              else {
+                const auto result=interactions->combine(*ingredient,id);ingredient.reset();
+                if(result)std::cout << "Combined: " << jerusalem::inventory_name(*navigation,*result) << '\n';
+                else std::cout << "No supported combination for these items\n";
+              }
+            }
+          }
           if(event.key.keysym.sym==SDLK_i && interactions) {
             std::cout << "Collected items: " << interactions->inventory().size() << '\n';
-            for(const auto id:interactions->inventory()) std::cout << id << ' ' << jerusalem::collectible(*navigation,id).name << '\n';
-            std::cout << "Item use/combinations are not implemented; checkpoint controls preserve this preview only\n";
+            unsigned number=0;
+            for(const auto id:interactions->inventory()) std::cout << ++number << ": " << id << ' ' << jerusalem::inventory_name(*navigation,id) << '\n';
+            std::cout << "Press 1..9 to select an inventory ingredient, then 1..9 for the second; character item use is unavailable\n";
           }
         } else if (event.type==SDL_WINDOWEVENT && (event.window.event==SDL_WINDOWEVENT_FOCUS_LOST || event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED)) {
           foreground=event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED;
