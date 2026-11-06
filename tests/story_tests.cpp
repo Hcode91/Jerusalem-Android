@@ -1,6 +1,8 @@
 #include "jerusalem/checkpoint.hpp"
 #include "jerusalem/dialogue.hpp"
 #include "jerusalem/cinema.hpp"
+#include "jerusalem/stage.hpp"
+#include <chrono>
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -18,6 +20,28 @@ SceneGraph graph(){
  g.targets={{30,2,100,0,200,100,62,0,false,"Successor"},{31,2,100,0,200,100,62,0,true,"Offer"},{32,1,300,0,400,100,62,0,true,"Feedback"}};
  g.uses={{1,31,11,52,1,30,51,30,1,0,0,true},{2,32,20,0,0,0,0,0,0,0,60,false}};
  g.dialogues={{60,"A01","SYNTH_SPEECH"}};return g;
+}
+void dialogue_paths(){
+ const auto root=std::filesystem::temp_directory_path()/("jerusalem-dialogue-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+ struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code error;std::filesystem::remove_all(path,error);}} cleanup{root};
+ const DialogueResource speech{10999,"A01","ISHT_DIA001"};
+ for(const auto& layout:{std::string{},std::string("data"),std::string("DATA")}){
+  const auto area=root/layout/"a01",sound=area/"sOuNd/eNg",dia=area/"DiA/eng";
+  std::filesystem::create_directories(sound);std::filesystem::create_directories(dia);
+  const auto text=dia/"Isht_Dia001.dia";{std::ofstream f(text);f<<"0 Synthetic caption\n1 END\n";}
+  for(const auto& suffix:{"wac","WaS","WAV"}){
+   const auto audio=sound/(std::string("Isht_Dia001.")+suffix);{std::ofstream f(audio);f<<"synthetic";}
+   const auto selected=resolve_dialogue(root,speech);check(selected.audio==audio && selected.subtitles==text);
+   const auto duplicate=sound/"ISHT_DIA001.WAS";{std::ofstream f(duplicate);f<<"ambiguous";}
+   reject([&]{resolve_dialogue(root,speech);});std::filesystem::remove(duplicate);
+   std::filesystem::remove(audio);
+  }
+  reject([&]{resolve_dialogue(root,speech);});
+  const auto outside=root/"outside.WAS";{std::ofstream f(outside);f<<"synthetic";}
+  std::filesystem::create_symlink(outside,sound/"ISHT_DIA001.WAS");reject([&]{resolve_dialogue(root,speech);});
+  std::filesystem::remove(sound/"ISHT_DIA001.WAS");std::filesystem::remove(outside);
+  std::filesystem::remove_all(area);
+ }
 }
 void word(std::vector<std::uint8_t>& b,std::size_t p,std::uint32_t v,unsigned bytes=4){if(b.size()<p+bytes)b.resize(p+bytes);for(unsigned i=0;i<bytes;++i)b[p+i]=std::uint8_t(v>>(8*i));}
 struct BitWriter {std::vector<std::uint8_t> bytes;unsigned count=0;void put(unsigned v,unsigned n){for(unsigned i=0;i<n;++i){if(count%8==0)bytes.push_back(0);bytes[count/8]|=((v>>i)&1)<<(count%8);++count;}}};
@@ -51,6 +75,7 @@ std::vector<std::uint8_t> advanced_cinema(bool overshoot=false){
 
 }
 int main(int argc,char** argv){try{
+ dialogue_paths();
  const auto g=graph();const auto text=write_navigation(g);check(text.find("NAV_V5")!=std::string::npos);check(write_navigation(parse_navigation(text))==text);
  const auto legacy=legacy_navigation(g,2);check(legacy.items.size()==3 && !has_story_rules(legacy));
  const Checkpoint old{1,{0,0,85},{11,10,12}};const auto older=encode_checkpoint(legacy,7,old);check(decode_checkpoint(Bytes(older),g,7).inventory==old.inventory);
@@ -104,6 +129,17 @@ int main(int argc,char** argv){try{
  CinemaDecoder empties(empty_audio),baseline(cinema(true));std::vector<std::size_t> audio_sizes;unsigned image_count=0;
  while(!empties.done()){const auto event=empties.next();if(event.kind==CinemaEvent::Audio)audio_sizes.push_back(event.pcm.size());if(event.kind==CinemaEvent::Frame)++image_count;}
  while(!baseline.done())baseline.next();check(audio_sizes==std::vector<std::size_t>({4,0,0}));check(image_count==1);check(empties.dib()==baseline.dib());
+ if(argc==4 && std::string(argv[1])=="--dialogue"){
+  const auto model=read_file(argv[2]);const auto setup=parse_stage(std::string(model.begin(),model.end()));
+  for(const auto id:{10999U,10000U,10001U,10002U,11000U,11002U,11004U,11005U,11008U,11011U,11012U,11013U,11014U,11015U,11016U,11017U}){
+   const auto entry=std::find_if(setup.dialogues.begin(),setup.dialogues.end(),[&](const DialogueResource& d){return d.id==id;});check(entry!=setup.dialogues.end());
+   const auto files=resolve_dialogue(argv[3],*entry);const auto captions=read_file(files.subtitles);check(!parse_dia(std::string(captions.begin(),captions.end())).cues.empty());
+   const auto audio=read_file(files.audio);const Bytes bytes(audio);
+   const auto decoded=bytes.is(8,"RIFF")?decode_game_audio(bytes):audio;check(parse_wave(Bytes(decoded)).data_size>0);
+   if(id==10999)check(files.audio.extension()==".WAS");
+  }
+  std::cout<<"All 16 original first-escape speeches resolved, subtitles parsed and audio decoded\n";
+ }
  if(argc==3){const auto exe=read_file(argv[1]);const auto real=extract_a01_navigation(Bytes(exe));check(real.items.size()==4 && real.uses.size()==4);const auto& palm=real.items.back();const auto& offer=real.uses.front();
   for(bool first:{false,true}){InteractionState state(real);state.pickup(offer.item);if(first)state.pickup(palm.id);check(state.use(offer.id));if(!first)state.pickup(palm.id);check(state.variable(offer.variable)==offer.value);check(state.variable(palm.counter)==palm.value);
    const Checkpoint cp{palm.node,{0,0,85},state.history()};const auto restored=restore_interactions(real,decode_checkpoint(Bytes(encode_checkpoint(real,3,cp)),real,3));

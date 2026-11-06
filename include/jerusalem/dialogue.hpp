@@ -7,5 +7,7 @@ struct DialogueText { std::vector<SubtitleCue> cues; std::uint32_t end_ms; };
 DialogueText parse_dia(const std::string& bytes);
 std::string subtitle_at(const DialogueText& text,std::uint64_t elapsed_ms);
 struct DialogueFiles { std::filesystem::path audio,subtitles; };
+// A unique, case-insensitive WAC/WAS/WAV audio sibling plus the matching DIA.
+// File bytes select the decoder; the executable's WAC suffix is not authoritative.
 DialogueFiles resolve_dialogue(const std::filesystem::path& root,const DialogueResource& resource);
 }

@@ -5,7 +5,7 @@ This milestone connects the original A01 opening to the first escape and its fol
 ## Implemented
 
 - A separate **Start A01 story** button, with a fresh inventory. Existing asset inspection, navigation previews and preview checkpoints remain available.
-- Original opening: AN001 → black puzzle 10045 / ISHT_DIA001 → AN002 → node 1010101.
+- Original opening: AN001 → black puzzle 10045 / ISHT_DIA001 → AN002 → node 1010101. The disc stores this speech as `ISHT_DIA001.WAS` although its executable registration names `.WAC`. Dialogue lookup now accepts a unique WAC, WAS or WAV sibling, case-insensitively; bytes select the audio decoder. Ambiguous or unsafe alternatives are rejected.
 - First arrival at node 1010106: AN003 → puzzles 10016, 10018 and 10017 with speech 10000, 10001 and 10002 → node 6 and the original 60-second countdown.
 - Puzzle exit 10039: two speakers, the original connection-enable changes, and return to node 5 at yaw 24°.
 - The matting offer, selecting world object 10010, character changes 10006 → 10008 ↔ 10009, and using the palm on object 10011 after the encounter. The palm can be collected before or after the offer; it is retained when used, as in the original handler.
@@ -16,6 +16,8 @@ This milestone connects the original A01 opening to the first escape and its fol
 - The foreground story clock pauses during synchronous movies and excludes Android background time. Returning to node 3 in phase 2 applies the original countdown change to 50 seconds. Inventory dialogs do not explicitly pause this clock.
 
 ## Evidence and limits
+
+User-provided gameplay reference: [Jerusalem: The Three Roads to the Holy Land — English Longplay — No Commentary](https://www.youtube.com/watch?v=8f98wqVi2gs). The video page was accessible, but playable footage was not exposed by the available browsing tools. No scene observations or timing measurements have been verified from this video yet. Future comparisons should cover cursor/hotspot feedback, camera movement, inventory use, puzzle entry/exit, and movie/dialogue transitions; the video does not establish binary format structures.
 
 The supported executable is still fingerprinted as FNV-64 `64b12e05ac088220`, SHA-256 `b4293e49167bc85a105fb8bef554972cc8c70406afa6da7096facf6640040687`. No original instructions execute in the app.
 
@@ -37,6 +39,8 @@ The supported executable is still fingerprinted as FNV-64 `64b12e05ac088220`, SH
 | `004110f0` | Forward/reverse and ping-pong animation modes; repeated endpoint frames |
 
 Private isolated reference checks match **296 captured setup calls / 141 visual-access records** and **eight selected original handler cases** for the palm exit, both successful projectiles and both wrong targets. All engine calls are capture stubs. This validates these records/requests, not every branch or the entire original execution order.
+
+The dialogue lookup regression covers all three audio extensions, flattened/data/DATA layouts, mixed casing, missing files, duplicate extensions/casing and symlinks. An additional private check resolves and decodes all 16 speeches required by the first-escape startup, including the real opening WAS. Missing-resource messages direct the user to import data; refreshing the executable is only suggested for a missing or stale scene model.
 
 The host route tests also use the real extracted graph/setup, decode the original backgrounds and all active BMP animation frames encountered on both success routes, and apply the registered AQC patches. Phone rendering and interaction still require device testing.
 
@@ -69,6 +73,7 @@ ctest --test-dir build-host --output-on-failure
 build-host/jinspect extract-a01-stage /path/to/Jerusalem.exe /new/a01-stage.tsv
 python3 tools/validate_stage_reference.py /path/to/Jerusalem.exe /new/a01-stage.tsv
 build-host/stage_tests /path/to/Jerusalem.exe /path/to/game-root
+build-host/story_tests --dialogue /new/a01-stage.tsv /path/to/game-root
 build-host/jinspect stage-art /path/to/A01.AT3 A01S01N05P02.BMP /new/background.pam
 ```
 
