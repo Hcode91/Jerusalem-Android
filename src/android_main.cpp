@@ -79,8 +79,10 @@ class Renderer {
   void bitmap(const jerusalem::Bitmap& b) {
     clear_image();
     texture_=SDL_CreateTexture(renderer_,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,static_cast<int>(b.width),static_cast<int>(b.height));
-    if (!texture_ || !SDL_UpdateTexture(texture_,nullptr,b.rgba.data(),static_cast<int>(b.width*4)))
-      throw jerusalem::ParseError(std::string("Render: ")+SDL_GetError());
+    if (!texture_ || !SDL_UpdateTexture(texture_,nullptr,b.rgba.data(),static_cast<int>(b.width*4))) {
+      const std::string error=SDL_GetError(); clear_image();
+      throw jerusalem::ParseError("Render: "+error);
+    }
     width_=static_cast<int>(b.width); height_=static_cast<int>(b.height); fit();
   }
   void draw(const std::string& message) {
@@ -108,10 +110,10 @@ class InspectionScene {
  public:
   InspectionScene(Renderer& r,Audio& a):renderer_(r),audio_(a) {}
   void open(const std::string& requested) {
+    audio_.stop(); renderer_.clear_image();
     try {
       const auto path=checked_path(requested);
       auto data=jerusalem::read_file(path); jerusalem::Bytes b(data);
-      audio_.stop(); renderer_.clear_image();
       if (b.is(0,"BM")) renderer_.bitmap(jerusalem::decode_bitmap(b));
       else if (b.is(0,"RIFF") && b.is(8,"WAVE")) audio_.play(b);
       report(jerusalem::inspect(b));
@@ -169,10 +171,12 @@ Java_org_jerusalem_engine_MainActivity_nativeStatus(JNIEnv* env,jclass) {
 
 int main(int,char**) {
   SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS,"0");
-  if (!SDL_Init(SDL_INIT_VIDEO)) { report(SDL_GetError()); return 1; }
+  if (!SDL_Init(SDL_INIT_VIDEO)) { report(SDL_GetError()); SDL_Quit(); return 1; }
+  // Declared before renderer/audio so SDL outlives their resource destructors.
+  struct SDLGuard { ~SDLGuard() { SDL_Quit(); } } sdl_guard;
   {
     Renderer renderer;
-    if (!renderer.init()) { report(SDL_GetError()); SDL_Quit(); return 1; }
+    if (!renderer.init()) { report(SDL_GetError()); return 1; }
     Audio audio;
     const bool have_audio=SDL_InitSubSystem(SDL_INIT_AUDIO);
     report(have_audio ? "Ready. Import data and browse assets. Drag images to pan; use Fit or Zoom controls." :
@@ -197,7 +201,7 @@ int main(int,char**) {
         std::lock_guard<std::mutex> guard(bridge_mutex);
         path.swap(pending_path); action=commands; commands=0; message=diagnostic;
       }
-      if (!path.empty()) scene.open(path);
+      if (!path.empty()) { scene.open(path); if (background) audio.pause(true); }
       if (action&(1U<<1)) renderer.fit();
       if (action&(1U<<2)) renderer.zoom(1.25f);
       if (action&(1U<<3)) renderer.zoom(0.8f);
@@ -206,5 +210,5 @@ int main(int,char**) {
       SDL_Delay(background?100:16);
     }
   }
-  SDL_Quit(); return 0;
+  return 0;
 }
