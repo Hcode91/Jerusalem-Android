@@ -18,6 +18,8 @@ An independent C++17 engine reimplementation with an SDL2 desktop panorama viewe
 - Native SDL3 Android entry point, rendering and audio backends, inspector scene, touch image panning, zoom controls, lifecycle audio pause/resume, diagnostics, and Android Storage Access Framework folder import.
 - Parser regression tests, truncation checks, deterministic malformed-input tests, and an ARM64 debug APK GitHub Actions workflow.
 
+Both complete European disc images are now available privately. The [Disc 2 survey](docs/disc2-corpus-survey.md) adds 119 successfully decoded full-node images and seven validated AT3 directories; new-area gameplay and Cinema movie decoding remain unimplemented.
+
 See [reverse-engineering notes](docs/reverse-engineering.md) for byte layouts, code references, sample identities, uncertainties, and next priorities. See [Android usage and validation](docs/android.md) for import and installation.
 
 ## Host tools and tests
