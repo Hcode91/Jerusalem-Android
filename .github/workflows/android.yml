@@ -65,12 +65,14 @@ jobs:
         with:
           gradle-version: '8.11.1'
       - name: Build native engine and debug APK; run Android lint
+        id: apk_build
         working-directory: android
         shell: bash
         run: |
           set -o pipefail
           gradle --no-daemon --stacktrace :app:assembleDebug :app:lintDebug 2>&1 | tee build.log
       - name: Verify APK contains ARM64 engine and SDL libraries
+        id: apk_verify
         shell: bash
         run: |
           python3 - <<'PY'
@@ -106,6 +108,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Launch native inspector in Android emulator
+        id: emulator_smoke
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -136,7 +139,10 @@ jobs:
         run: |
           echo '### Jerusalem native Android build' >> "$GITHUB_STEP_SUMMARY"
           echo 'Result: ${{ job.status }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'APK compilation and lint: ${{ steps.apk_build.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ARM64 packaging: ${{ steps.apk_verify.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Emulator validation: ${{ steps.emulator_smoke.outcome }}' >> "$GITHUB_STEP_SUMMARY"
           echo 'The APK artifact is ARM64, debug signed, and contains no original game data. Device launch and gameplay are separate validation steps.' >> "$GITHUB_STEP_SUMMARY"
           if [ '${{ job.status }}' != success ]; then
-            echo '::error::Android build failed. Inspect the failing step and android-build-diagnostics artifact.'
+            echo '::error::Android workflow failed. Check the failing step: compilation, packaging and emulator validation are separate checks. See android-build-diagnostics and android-emulator-smoke-evidence.'
           fi

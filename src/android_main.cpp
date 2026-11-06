@@ -8,6 +8,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <memory>
 #include <mutex>
@@ -47,21 +48,25 @@ std::filesystem::path checked_path(const std::string& text) {
 }
 
 class Audio {
+  std::mutex mutex_;
   SDL_AudioStream* stream_=nullptr;
   Uint64 started_=0, duration_ms_=0;
   bool drained_=false;
   std::string asset_;
+  void stop_locked() { if (stream_) SDL_DestroyAudioStream(stream_); stream_=nullptr; drained_=false; }
  public:
   ~Audio() { stop(); }
-  void stop() { if (stream_) SDL_DestroyAudioStream(stream_); stream_=nullptr; drained_=false; }
+  void stop() { std::lock_guard<std::mutex> guard(mutex_);stop_locked(); }
   void pause(bool paused) {
+    std::lock_guard<std::mutex> guard(mutex_);
     if (stream_) {
       const bool ok=paused ? SDL_PauseAudioStreamDevice(stream_) : SDL_ResumeAudioStreamDevice(stream_);
       if (!ok) report(std::string("Audio pause/resume failed: ")+SDL_GetError());
     }
   }
   void play(jerusalem::Bytes b,const std::string& name) {
-    stop();
+    std::lock_guard<std::mutex> guard(mutex_);
+    stop_locked();
     std::vector<std::uint8_t> decoded;
     if (b.is(8,"RIFF") && b.is(16,"WAVE")) {
       decoded=jerusalem::decode_game_audio(b);
@@ -76,7 +81,7 @@ class Audio {
     stream_=SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,&spec,nullptr,nullptr);
     if (!stream_ || !SDL_PutAudioStreamData(stream_,b.data()+w.data_offset,static_cast<int>(w.data_size)) ||
         !SDL_FlushAudioStream(stream_) || !SDL_ResumeAudioStreamDevice(stream_)) {
-      const std::string error=SDL_GetError(); stop(); throw jerusalem::ParseError("Audio: "+error);
+      const std::string error=SDL_GetError(); stop_locked(); throw jerusalem::ParseError("Audio: "+error);
     }
     asset_=name; started_=SDL_GetTicks();
     duration_ms_=(std::uint64_t(w.data_size)*1000+w.rate*w.channels*(w.bits/8)-1)/(w.rate*w.channels*(w.bits/8));
@@ -87,10 +92,11 @@ class Audio {
     report("Playing audio: "+asset_+". Use Play audio to replay or Stop audio to stop.");
   }
   void update() {
+    std::lock_guard<std::mutex> guard(mutex_);
     if (!stream_ || drained_) return;
     const int queued=SDL_GetAudioStreamQueued(stream_), available=SDL_GetAudioStreamAvailable(stream_);
     if (queued<0 || available<0) {
-      const std::string error=SDL_GetError(); stop(); report("Audio stream error: "+error); return;
+      const std::string error=SDL_GetError(); stop_locked(); report("Audio stream error: "+error); return;
     }
     if (queued==0 && available==0 && SDL_GetTicks()-started_>=duration_ms_) {
       drained_=true;
@@ -457,6 +463,28 @@ class InspectionScene {
     } catch (const std::exception& e) { report(std::string("Cannot enter scene: ")+e.what()); }
   }
 };
+// Android may suspend SDL_PollEvent before queued app events reach the loop.
+// Handle audio at event enqueue time; renderer/input changes stay on the main loop.
+class LifecycleWatch {
+  Audio& audio_;
+  InspectionScene& scene_;
+  std::atomic<bool> background_{false};
+  static bool SDLCALL watch(void* context,SDL_Event* event) {
+    auto& self=*static_cast<LifecycleWatch*>(context);
+    if (event->type==SDL_EVENT_WILL_ENTER_BACKGROUND || event->type==SDL_EVENT_DID_ENTER_FOREGROUND) {
+      const bool paused=event->type==SDL_EVENT_WILL_ENTER_BACKGROUND;
+      self.background_.store(paused);
+      self.audio_.pause(paused); self.scene_.pause_audio(paused);
+    }
+    return true;
+  }
+ public:
+  LifecycleWatch(Audio& audio,InspectionScene& scene):audio_(audio),scene_(scene) {
+    if (!SDL_AddEventWatch(watch,this)) throw jerusalem::ParseError(std::string("Lifecycle event watch: ")+SDL_GetError());
+  }
+  ~LifecycleWatch() { SDL_RemoveEventWatch(watch,this); }
+  bool background() const { return background_.load(); }
+};
 } // namespace
 
 extern "C" JNIEXPORT jbyteArray JNICALL
@@ -528,7 +556,8 @@ int main(int,char**) {
     report(have_audio ? "Ready. Import data and browse assets. Drag images to pan; use Fit or Zoom controls." :
            std::string("Ready without audio: ")+SDL_GetError());
     InspectionScene scene(renderer,audio);
-    bool running=true,background=false,dragging=false;
+    LifecycleWatch lifecycle(audio,scene);
+    bool running=true,dragging=false;
     float touch_x=0,touch_y=0; bool touch_moved=false;
     std::set<SDL_FingerID> touches;
     SDL_FingerID active_touch=0;
@@ -536,8 +565,8 @@ int main(int,char**) {
       SDL_Event event;
       while (SDL_PollEvent(&event)) {
         if (event.type==SDL_EVENT_QUIT) running=false;
-        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; touches.clear(); touch_moved=true; audio.pause(true); scene.pause_audio(true); renderer.reset_animation_clock(); }
-        else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { background=false; audio.pause(false); scene.pause_audio(false); renderer.reset_animation_clock(); }
+        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { dragging=false; touches.clear(); touch_moved=true; renderer.reset_animation_clock(); }
+        else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { renderer.reset_animation_clock(); }
         else if (event.type==SDL_EVENT_FINGER_DOWN) {
           if (touches.empty()) { active_touch=event.tfinger.fingerID; touch_x=event.tfinger.x; touch_y=event.tfinger.y; touch_moved=false; }
           else touch_moved=true;
@@ -565,7 +594,7 @@ int main(int,char**) {
         std::lock_guard<std::mutex> guard(bridge_mutex);
         path.swap(pending_path); action=commands; commands=0; message=diagnostic;
       }
-      if (!path.empty()) { scene.open(path); if (background) audio.pause(true); }
+      if (!path.empty()) { scene.open(path); if (lifecycle.background()) audio.pause(true); }
       if (action&(1U<<1)) renderer.fit();
       if (action&(1U<<2)) renderer.zoom(1.25f);
       if (action&(1U<<3)) renderer.zoom(0.8f);
@@ -574,12 +603,12 @@ int main(int,char**) {
       if (action&(1U<<6)) renderer.preview_animation();
       if (action&(1U<<7)) scene.toggle_navigation();
       if (action&(1U<<8)) scene.toggle_navigation(true);
-      if (!background) audio.update();
-      if (!background) {
+      if (!lifecycle.background()) audio.update();
+      if (!lifecycle.background()) {
         try { renderer.draw(message); }
         catch (const std::exception& e) { renderer.clear_image(); report(std::string("Render error: ")+e.what()); }
       }
-      SDL_Delay(background?100:16);
+      SDL_Delay(lifecycle.background()?100:16);
     }
   }
   return 0;
