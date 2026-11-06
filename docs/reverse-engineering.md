@@ -120,9 +120,9 @@ The sample's first record has offset **82907** (`32 + 82875`), stored length **7
 
 **Verified sample observations:** AQC has no standard image signature at offset zero. u32 LE values at offsets 0, 4, 8, 12 are **593055**, **2048**, **856**, **2**. IEEE754 interpretations at `0x14`, `0x18`, `0x1c` yield **360**, **-75**, **75**. Words at `0x24`, `0x2c`, `0x30`, `0x34` are **2048**, **856**, **3506176**, **4096**. The arithmetic `2048 × 856 × 2 = 3506176` holds.
 
-**Updated verification:** Ghidra tracing established image dimensions, source bytes per pixel, the two compressed streams, codebook expansion and RGB565 colours. All 19 Disc 1 static images now decode and match original index/codebook routines. Angular/projection semantics remain under investigation. See [milestone 4](aqc-milestone-4.md) for exact offsets, bounds and validation.
+**Updated verification:** Ghidra tracing established image dimensions, source bytes per pixel, the two compressed streams, codebook expansion and RGB565 colours. All 19 Disc 1 static images now decode and match original index/codebook routines. The spherical projection and angular fields are now verified in milestone 5. See [milestone 4](aqc-milestone-4.md) for exact offsets, bounds and validation.
 
-Executable strings at VA `0x4ab940` onward identify `aSecComAqi::DecompressNode` and `DecompressChannel`. Format strings reference `%s.aqc` and numbered AQC filenames. Diagnostics also identify rotations, puzzles, animation images, hotspots, and accessibility. These suggest relationships between views, transitions, and interactions. Actual node graph layout, coordinates, hotspot hit testing, projection, and script effects have not been traced. The Android scene manager currently has only an inspection scene; there is no invented game navigation.
+Executable strings at VA `0x4ab940` onward identify `aSecComAqi::DecompressNode` and `DecompressChannel`. Format strings reference `%s.aqc` and numbered AQC filenames. Diagnostics also identify rotations, puzzles, animation images, hotspots, and accessibility. These suggest relationships between views, transitions, and interactions. Actual node graph layout, hotspot coordinates/hit testing and script effects have not been traced. The projection is now established in milestone 5. The Android scene manager currently has only an inspection scene; there is no invented game navigation.
 
 ## 7. Dialogue and DAN
 
@@ -166,3 +166,7 @@ Architecture references used for the independent app: [SDL Android integration](
 ## Native original-image implementation
 
 [Milestone 4](aqc-milestone-4.md) implements bounded Python/C++ AQC static decoding and Android image display. All 19 Disc 1 static nodes have original-routine-verified indices/codebooks and matching native/Python pixels. Animation tails are reported as undecoded. Projection, hotspots, navigation and Cinema decoding remain future work.
+
+## Native panorama camera
+
+[Milestone 5](panorama-milestone-5.md) establishes spherical/equirectangular mapping, a 640×448 logical camera viewport, 85° constructor FOV with 30°..87° limits, and row-stride semantics at AQC offset 0x34. It implements the native camera and SDL2 viewer, and compares 2701 source-coordinate samples against original code. AQC channel framing remains unresolved in one of 19 nodes; no animation playback is claimed.

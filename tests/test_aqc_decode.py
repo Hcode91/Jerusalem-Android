@@ -18,7 +18,7 @@ def pack(bits):
 
 
 def fixture():
-    header = struct.pack('<III4f6I', 8, 1, 2, 0., 360., -75., 75., 0, 8, 0, 1, 16, 0x1000)
+    header = struct.pack('<III4f6I', 8, 1, 2, 0., 360., -75., 75., 0, 8, 0, 1, 16, 16)
     indices = pack('0' + f'{0:013b}' + '0' + f'{1:013b}')
     colors = [0xf800, 0x07e0, 0x001f, 0xffff, 0, 0x7800, 0x03e0, 0x000f]
     palette = pack(''.join('0' + f'{c:016b}' for c in colors) + '11' * (32400 - len(colors)))
@@ -66,7 +66,7 @@ class AqcTests(unittest.TestCase):
         for end in (0, 55, 56, 60, len(original) - 1):
             self.native(original[:end])
 
-    def test_invalid_geometry_flags_lengths_and_index(self):
+    def test_invalid_geometry_stride_lengths_and_index(self):
         original = fixture()
         for offset, value in ((0, 0xffffffff), (4, 0xffffffff), (8, 0), (12, 4),
                               (16, 0x7fc00000), (32, 1), (48, 0), (52, 0),

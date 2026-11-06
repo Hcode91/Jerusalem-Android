@@ -4,6 +4,8 @@ The native core and standalone Python tool now decode the static image in all **
 
 The Android inspector displays these images through its existing touch pan/zoom renderer. This is a flat decoded image, not a researched 360° projection. Embedded animation channels, hotspots, scene transitions and gameplay remain unimplemented.
 
+Subsequent progress: [milestone 5](panorama-milestone-5.md) verifies the spherical camera, adds SDL2/Android look-around, and establishes the row-stride field. The user has confirmed this milestone's original-image display on Android.
+
 ## Original code evidence
 
 The verified executable identity is recorded in the earlier milestones. The following addresses were traced in Ghidra, with decompilation checked against instruction listings:
@@ -35,7 +37,7 @@ All integers are little-endian; compressed bits are MSB first within each byte. 
 | `0x10 .. 0x1f` | four f32 | Finite fields observed as 0, 360, -75, 75; angular interpretation is likely, but projection semantics remain unverified |
 | `0x20 .. 0x2f` | four u32 | Full image rectangle, supported values 0, width, 0, height |
 | `0x30` | u32 | Source pixel bytes = width × height × 2 |
-| `0x34` | u32 | Observed header word `0x1000`; bit semantics are not established |
+| `0x34` | u32 | Row stride in bytes = rectangle width × 2; established in milestone 5. The original base image has value 4096 |
 | `0x38` | byte array | First compressed stream |
 | `0x38 + first_length` | u32 | Second compressed-stream length |
 | immediately after | byte array | Second compressed stream |

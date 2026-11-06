@@ -314,11 +314,11 @@ ResourceDescription describe_resource(Bytes b, const std::string& filename) {
         "This is a current engine limitation; the app cannot run game scenes yet.");
 
   // No AQC magic exists in this observed dialect; require the full header model.
-  if (b.size()>=56 && b.u32(12)==2 && b.u32(52)==0x1000) {
+  if (b.size()>=56 && b.u32(12)==2 && b.u32(52)==b.u32(4)*2) {
     const auto node=parse_aqc(b);
     const auto summary="AQC static node image: "+std::to_string(node.width)+" x "+std::to_string(node.height)+".";
-    const auto details=summary+"\nThe native view displays decoded original pixels as a flat image.\n"
-        "Drag to pan or use Fit image / Zoom. The 360-degree projection is not implemented.\n"
+    const auto details=summary+"\nThe native view offers the verified spherical 360-degree camera for supported angular bounds.\n"
+        "Drag to look around, use Zoom, or choose Flat / 360 to inspect the full image. Fit image resets the camera.\n"
         "Trailing bytes not decoded: "+std::to_string(node.tail_size)+
         ". Embedded animations, navigation and hotspots are not implemented.";
     return result(ResourceKind::AqcImage,summary,details);
