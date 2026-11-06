@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 import xml.etree.ElementTree as ET
 import io
+import struct
 import sys
 import wave
 
@@ -86,6 +87,28 @@ class SmokeHarnessTests(unittest.TestCase):
         info, rgb = decode(smoke.synthetic_aqc())
         self.assertEqual((info['width'], info['height']), (8, 4))
         self.assertEqual(rgb, bytes([248, 0, 0, 0, 252, 0, 0, 0, 248, 248, 252, 248]) * 8)
+
+    def test_preloaded_cinema_fixture_matches_original_audio_chunk_layout(self):
+        def audio_chunks(data):
+            position = 192+data[27]*16+struct.unpack_from('<I', data, 28)[0]*8
+            chunks = []
+            while position < len(data):
+                tag = data[position]; position += 1
+                size = struct.unpack_from('<I', data, position)[0]
+                if tag == ord('Z'):
+                    position += 4; chunks.append(data[position:position+size])
+                elif tag == ord('T'):
+                    position += 8
+                else:
+                    self.assertIn(tag, b'SU'); position += 47
+                position += size
+            self.assertEqual(position, len(data))
+            return chunks
+        streamed = audio_chunks(smoke.synthetic_cinema(3))
+        preloaded = audio_chunks(smoke.synthetic_cinema(3, preload_audio=True))
+        self.assertEqual([len(chunk) for chunk in streamed], [3528]*3)
+        self.assertEqual([len(chunk) for chunk in preloaded], [10584, 0, 0])
+        self.assertEqual(b''.join(preloaded), b''.join(streamed))
 
     def test_compressed_audio_signals_are_nonempty_valid_waves(self):
         sys.path.insert(0, str(Path(__file__).parents[1] / 'tools'))

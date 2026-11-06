@@ -87,6 +87,11 @@ def main():
         if result.returncode or 'Cinema decoded: 3 frames' not in result.stdout:
             raise RuntimeError(f'SDL2 cinema failed: {result.stdout}\n{result.stderr}')
         print('PASS: SDL2 native CNM T/U/S decoding, timed presentation and stereo PCM queue')
+        preloaded = Path(directory)/'preloaded.CI2';preloaded.write_bytes(synthetic_cinema(3, preload_audio=True))
+        result = subprocess.run([sys.argv[2], str(preloaded), '--exit-at-end'], env=env, capture_output=True, text=True, timeout=30)
+        if result.returncode or 'Cinema decoded: 3 frames' not in result.stdout:
+            raise RuntimeError(f'SDL2 preloaded Cinema failed: {result.stdout}\n{result.stderr}')
+        print('PASS: preloaded soundtrack and empty sound chunks preserve all frames/playback')
         converted = Path(directory)/'cinema-export'
         native = Path(sys.argv[1]).parent/'jinspect'
         if extract_cinema(movie, converted, native) != 3:

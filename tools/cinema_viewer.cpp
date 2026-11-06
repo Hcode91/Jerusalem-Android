@@ -33,7 +33,7 @@ int main(int argc,char** argv){try{
   const auto elapsed=(paused?pause_start:now)-start-paused_total,desired=1+elapsed*info.rate_word/100000;
   unsigned budget=4;
   while(!paused && !movie.done() && frames<desired && budget){const auto decoded=movie.next();
-   if(decoded.kind==jerusalem::CinemaEvent::Audio && decoded.channel==0){if(SDL_GetQueuedAudioSize(audio.id)>4*1024*1024 || SDL_QueueAudio(audio.id,decoded.pcm.data(),static_cast<Uint32>(decoded.pcm.size()))!=0)throw std::runtime_error("cinema PCM queue failed");SDL_PauseAudioDevice(audio.id,0);}
+   if(decoded.kind==jerusalem::CinemaEvent::Audio && decoded.channel==0 && !decoded.pcm.empty()){if(SDL_GetQueuedAudioSize(audio.id)>4*1024*1024 || SDL_QueueAudio(audio.id,decoded.pcm.data(),static_cast<Uint32>(decoded.pcm.size()))!=0)throw std::runtime_error("cinema PCM queue failed");SDL_PauseAudioDevice(audio.id,0);}
    if(decoded.kind==jerusalem::CinemaEvent::Frame || decoded.kind==jerusalem::CinemaEvent::Dropped){const auto image=movie.image();if(SDL_UpdateTexture(texture.get(),nullptr,image.rgba.data(),static_cast<int>(image.width*4))!=0)throw std::runtime_error(SDL_GetError());displayed=true;std::cout << "Cinema frame: " << frames++ << '\n';--budget;}
   }
   if(movie.done() && !reported){reported=true;std::cout << "Cinema decoded: " << frames << " frames\n";}
