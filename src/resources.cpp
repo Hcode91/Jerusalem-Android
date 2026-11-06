@@ -292,7 +292,8 @@ ResourceDescription describe_resource(Bytes b, const std::string& filename) {
         std::to_string(wave.rate)+" Hz, "+std::to_string(wave.bits)+" bit.";
     std::ostringstream details;
     details<<summary<<"\nDuration: "<<double(wave.data_size)/(wave.rate*wave.channels*(wave.bits/8))
-           <<" seconds.\nIn the Android app, opening this file starts playback. Use Stop audio to stop playback.";
+           <<" seconds.\nThe Android app starts playback after its browser closes and it regains focus.\n"
+           <<"Use Play audio to start/replay or Stop audio to stop. Playback errors appear in the status area.";
     return result(ResourceKind::Wave,summary,details.str());
   }
   if (b.is(0,std::string("CNM UNR\0",8)))
