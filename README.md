@@ -8,6 +8,7 @@ An independent C++17 / SDL3 Android engine reimplementation for **Jerusalem: The
 - Original aMes/aObj localization table parsing, preserving order, duplicate IDs, and original bytes.
 - DAN level and interval parsing for the observed text dialect, with explicit `END` termination.
 - PE32 static inspection: sections, named/ordinal imports, relevant strings, SHA-256 identity. It never executes Windows code.
+- Ghidra loader tracing and a WAC/WAS block/token inspector. See [the verified audio layout checkpoint](docs/wac-was-milestone-2.md); compressed audio is not converted to PCM or played yet.
 - Standard uncompressed 24/32-bit BMP decoding and integer PCM WAV inspection/playback. The WAV parser has processed all 30 standard WAV files on Disc 1, including an original menu sound. No original image has yet been decoded.
 - Streaming ISO9660 extraction from the supplied MODE1/2352 disc image, with checked extents and dual-endian fields.
 - CUE validation for the supplied single MODE1/2352 data-track layout; conventional key/value INI parsing as a separate, explicitly selected dialect.
@@ -31,6 +32,7 @@ build-host/jinspect dan /path/to/clip.dan
 build-host/jinspect extract-at3 /path/to/a01.at3 /path/to/new-output-directory
 build-host/jinspect extract-media /path/to/resource /path/to/new-output-directory
 python3 tools/pe_probe.py /path/to/Jerusalem.ex_
+python3 tools/wac_layout.py /path/to/sound.wac
 python3 tools/disc_extract.py list /path/to/disc1.bin
 python3 tools/disc_extract.py extract /path/to/disc1.bin DATA/A01.AT3 /path/to/new-a01.at3
 ```
