@@ -53,6 +53,13 @@ def preview_states(logs):
     return [tuple(map(int, match)) for match in re.findall(rb'AQC preview frame: channel=(\d+) frame=(\d+)', logs)]
 
 
+def checkpoint_states(logs):
+    pattern = (rb'Checkpoint state: action=(save|load) node=(\d+) yaw=([-\d.]+) '
+               rb'pitch=([-\d.]+) fov=([-\d.]+) inventory=(\d+)')
+    return [(action.decode(), int(node), float(yaw), float(pitch), float(fov), int(count))
+            for action, node, yaw, pitch, fov, count in re.findall(pattern, logs)]
+
+
 def current_ui():
     adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
     return adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml')
@@ -313,13 +320,50 @@ def main():
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
         wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Disabled return route or puzzle boundary was not respected')
+        click_scrolling('Save checkpoint')
+        wait_for(lambda: any(row[0] == 'save' for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
+                 'Native checkpoint was not saved')
+        saved = [row for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')) if row[0] == 'save'][-1]
+        checkpoint = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
+        if checkpoint[:8] != b'JRNSAVE\0' or not 68 <= len(checkpoint) <= 132:
+            raise RuntimeError('Checkpoint is missing or not the bounded native metadata format')
+        # A real process restart proves persistence beyond in-memory state.
+        (OUTPUT / 'before-checkpoint-restart-logcat.txt').write_bytes(adb('logcat', '-d'))
+        adb('shell', 'am', 'force-stop', PACKAGE)
+        adb('logcat', '-c')
+        adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
+        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Native app did not restart for checkpoint restoration')
+        click_scrolling('Load checkpoint')
+        wait_for(lambda: any(row[0] == 'load' for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
+                 'Native checkpoint did not load after process restart')
+        loaded = [row for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')) if row[0] == 'load'][-1]
+        if loaded[1:] != saved[1:]:
+            raise RuntimeError(f'Checkpoint scene/camera/inventory changed: {saved} vs {loaded}')
+        click_scrolling('Inventory')
+        wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic pickup' in current_ui(),
+                 'Restored inventory did not contain the saved pickup')
+        click('Close')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Restored picked item still intercepted the puzzle hotspot')
+        # Invalid load must preserve the currently restored session.
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-preview.jrs'", input=b'invalid checkpoint')
+        click_scrolling('Load checkpoint')
+        wait_for(lambda: b'Checkpoint load failed:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Corrupt checkpoint did not produce a clear load error')
+        click_scrolling('Inventory')
+        wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic pickup' in current_ui(),
+                 'Invalid checkpoint replaced the active inventory')
+        click('Close')
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-preview.jrs'", input=checkpoint)
         (OUTPUT / 'a01-traversal-synthetic.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('A01 navigation')
         wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Traversal preview did not switch off')
         wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Leaving traversal did not close ambient playback')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

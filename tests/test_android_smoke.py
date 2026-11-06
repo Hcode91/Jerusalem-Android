@@ -21,6 +21,12 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_checkpoint_evidence_distinguishes_save_load_and_other_logs(self):
+        logs = (b'Checkpoint state: action=save node=2 yaw=90.500000 pitch=-12.250000 fov=64.000000 inventory=1\n'
+                b'Other status\nCheckpoint state: action=load node=2 yaw=90.500000 pitch=-12.250000 fov=64.000000 inventory=1\n')
+        self.assertEqual(smoke.checkpoint_states(logs), [('save', 2, 90.5, -12.25, 64., 1), ('load', 2, 90.5, -12.25, 64., 1)])
+        self.assertEqual(smoke.checkpoint_states(b'No checkpoint state'), [])
+
     def test_preview_frame_evidence(self):
         logs = b'AQC preview frame: channel=1 frame=0\nAQC preview frame: channel=1 frame=1\nOther diagnostic\n'
         self.assertEqual(smoke.preview_states(logs), [(1, 0), (1, 1)])

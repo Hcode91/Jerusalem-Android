@@ -2,6 +2,7 @@
 #include "jerusalem/aqc_animation.hpp"
 #include "jerusalem/navigation.hpp"
 #include "jerusalem/interactions.hpp"
+#include "jerusalem/checkpoint.hpp"
 #include <SDL.h>
 #include <utility>
 #include <cmath>
@@ -12,18 +13,23 @@
 
 int main(int argc,char** argv) {
   try {
-    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview] [--navigation MODEL]");
+    if (argc<2) throw jerusalem::ParseError("Usage: jerusalem_viewer NODE.AQC [--frames COUNT] [--preview] [--navigation MODEL] [--checkpoint FILE] [--load-checkpoint] [--save-checkpoint]");
     std::optional<unsigned long> limit;
     bool start_preview=false;
-    std::optional<std::filesystem::path> navigation_file;
+    std::optional<std::filesystem::path> navigation_file,checkpoint_file;
+    bool load_start=false,save_start=false;
     for (int i=2;i<argc;++i) {
       if (std::string(argv[i])=="--preview") start_preview=true;
       else if (std::string(argv[i])=="--navigation" && i+1<argc) navigation_file=argv[++i];
+      else if (std::string(argv[i])=="--checkpoint" && i+1<argc) checkpoint_file=argv[++i];
+      else if (std::string(argv[i])=="--load-checkpoint") load_start=true;
+      else if (std::string(argv[i])=="--save-checkpoint") save_start=true;
       else if (std::string(argv[i])=="--frames" && i+1<argc) {
         limit=std::stoul(argv[++i]);
         if (*limit==0) throw jerusalem::ParseError("frame limit must be positive");
       } else throw jerusalem::ParseError("unknown viewer option");
     }
+    if((checkpoint_file && !navigation_file) || ((load_start || save_start) && !checkpoint_file)) throw jerusalem::ParseError("checkpoint controls require --navigation MODEL and --checkpoint FILE");
     auto data=jerusalem::read_file(argv[1]);
     auto geometry=jerusalem::panorama_geometry(jerusalem::Bytes(data));
     auto source=jerusalem::decode_aqc(jerusalem::Bytes(data));
@@ -77,10 +83,40 @@ int main(int argc,char** argv) {
         const auto input=jerusalem::read_file(argv[1]);
         source=jerusalem::compose_items(jerusalem::AqcAnimation(input),source,interactions->visibility(current));
         preview=std::make_unique<jerusalem::AqcPreview>(input,source);
-        std::cout << "Pickup preview ready; cyan markers collect supported items; I lists inventory; no item use or saves\n";
+        std::cout << "Pickup preview ready; cyan markers collect supported items; I lists inventory; --checkpoint FILE enables F5/F9 saves\n";
       }
       std::cout << "A01 traversal preview ready; story and puzzle actions are not implemented\n";
     }
+    const auto enter=[&](std::uint32_t target,jerusalem::Camera arrival,std::unique_ptr<jerusalem::InteractionState> next=nullptr) {
+      auto bytes=jerusalem::read_file(scene_assets.at(target));
+      auto image=jerusalem::decode_aqc(jerusalem::Bytes(bytes));
+      const auto next_geometry=jerusalem::panorama_geometry(jerusalem::Bytes(bytes));
+      if(jerusalem::parse_aqc_channels(jerusalem::Bytes(bytes)).size()!=jerusalem::scene_node(*navigation,target).channels)
+        throw jerusalem::ParseError("scene channel count differs from original setup");
+      if(!navigation->items.empty()) image=jerusalem::compose_items(jerusalem::AqcAnimation(bytes),image,(next?next:interactions)->visibility(target));
+      auto next_preview=std::make_unique<jerusalem::AqcPreview>(std::move(bytes),image);
+      source=std::move(image);geometry=next_geometry;preview=std::move(next_preview);
+      if(next)interactions=std::move(next);
+      current=target;camera=arrival;saved_camera.reset();preview_tick=SDL_GetTicks();dirty=true;
+      const auto title=jerusalem::scene_node(*navigation,current).asset+" / pickup preview; I inventory, F5 save, F9 load";
+      SDL_SetWindowTitle(window.get(),title.c_str());
+    };
+    const auto save_checkpoint=[&] {
+      if(!checkpoint_file || !navigation || !interactions) throw jerusalem::ParseError("use --navigation MODEL --checkpoint FILE for saving");
+      const auto view=jerusalem::constrain_camera(geometry,camera,texture_width>0?texture_width:640,texture_height>0?texture_height:448);
+      const jerusalem::Checkpoint cp{current,view,interactions->inventory()};
+      jerusalem::write_checkpoint(*checkpoint_file,*navigation,jerusalem::checkpoint_assets(*navigation,scene_assets),cp);
+      std::cout << "Checkpoint saved: node=" << current << " inventory=" << cp.inventory.size() << '\n';
+    };
+    const auto load_checkpoint=[&] {
+      if(!checkpoint_file || !navigation) throw jerusalem::ParseError("use --navigation MODEL --checkpoint FILE for loading");
+      const auto cp=jerusalem::read_checkpoint(*checkpoint_file,*navigation,jerusalem::checkpoint_assets(*navigation,scene_assets));
+      auto next=std::make_unique<jerusalem::InteractionState>(jerusalem::restore_interactions(*navigation,cp));
+      enter(cp.node,cp.camera,std::move(next));
+      std::cout << "Checkpoint loaded: node=" << current << " inventory=" << cp.inventory.size() << '\n';
+    };
+    if(load_start)load_checkpoint();
+    if(save_start)save_checkpoint();
     if(start_preview)cycle_preview();
     bool mouse_moved=false; int mouse_start_x=0,mouse_start_y=0;
     const auto tap=[&](float x,float y,int width,int height) {
@@ -99,18 +135,7 @@ int main(int argc,char** argv) {
         target=exit.target;arrival=exit.arrival;
       }
       try {
-        auto bytes=jerusalem::read_file(scene_assets.at(target));
-        auto image=jerusalem::decode_aqc(jerusalem::Bytes(bytes));
-        const auto next_geometry=jerusalem::panorama_geometry(jerusalem::Bytes(bytes));
-        if(jerusalem::parse_aqc_channels(jerusalem::Bytes(bytes)).size()!=jerusalem::scene_node(*navigation,target).channels)
-          throw jerusalem::ParseError("scene channel count differs from original setup");
-        if(!navigation->items.empty()) image=jerusalem::compose_items(jerusalem::AqcAnimation(bytes),image,(next?next:interactions)->visibility(target));
-        auto next_preview=std::make_unique<jerusalem::AqcPreview>(std::move(bytes),image);
-        source=std::move(image);geometry=next_geometry;preview=std::move(next_preview);
-        if(next)interactions=std::move(next);
-        current=target;camera=arrival;saved_camera.reset();preview_tick=SDL_GetTicks();dirty=true;
-        const auto title=jerusalem::scene_node(*navigation,current).asset+" / pickup preview; I lists inventory";
-        SDL_SetWindowTitle(window.get(),title.c_str());
+        enter(target,arrival,std::move(next));
         if(item)std::cout << "Collected: " << jerusalem::collectible(*navigation,*item).name << " [" << *item << "]\n";
         else std::cout << "A01 traversal: " << jerusalem::scene_node(*navigation,current).asset << '\n';
       }catch(const std::exception& e){std::cerr << "Cannot enter scene: " << e.what() << '\n';}
@@ -126,10 +151,14 @@ int main(int argc,char** argv) {
           if (event.key.keysym.sym==SDLK_ESCAPE) running=false;
           if (event.key.keysym.sym==SDLK_HOME) { camera={}; dirty=true; }
           if (event.key.keysym.sym==SDLK_a) cycle_preview();
+          if(event.key.keysym.sym==SDLK_F5 || event.key.keysym.sym==SDLK_F9) {
+            try {if(event.key.keysym.sym==SDLK_F5)save_checkpoint();else load_checkpoint();}
+            catch(const std::exception& e){std::cerr << "Checkpoint error: " << e.what() << '\n';}
+          }
           if(event.key.keysym.sym==SDLK_i && interactions) {
             std::cout << "Collected items: " << interactions->inventory().size() << '\n';
             for(const auto id:interactions->inventory()) std::cout << id << ' ' << jerusalem::collectible(*navigation,id).name << '\n';
-            std::cout << "Item use/combinations and saving are not implemented\n";
+            std::cout << "Item use/combinations are not implemented; checkpoint controls preserve this preview only\n";
           }
         } else if (event.type==SDL_WINDOWEVENT && (event.window.event==SDL_WINDOWEVENT_FOCUS_LOST || event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED)) {
           foreground=event.window.event==SDL_WINDOWEVENT_FOCUS_GAINED;

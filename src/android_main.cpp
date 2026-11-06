@@ -4,6 +4,7 @@
 #include "jerusalem/navigation.hpp"
 #include "jerusalem/scene_audio.hpp"
 #include "jerusalem/interactions.hpp"
+#include "jerusalem/checkpoint.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -262,6 +263,9 @@ class Renderer {
   void reset_animation_clock() { animation_tick_=SDL_GetTicks(); }
   void items(std::vector<jerusalem::Exit> items) { items_=std::move(items); }
   jerusalem::Camera camera() const { return camera_; }
+  jerusalem::Camera checkpoint_camera() const {
+    return jerusalem::constrain_camera(geometry_,camera_,camera_width_>0?camera_width_:640,camera_height_>0?camera_height_:448);
+  }
   void set_camera(jerusalem::Camera camera) { camera_=camera; camera_dirty_=true; }
   void exits(std::vector<jerusalem::Exit> exits) { exits_=std::move(exits); }
   std::optional<jerusalem::HotspotPoint> hit(float x,float y) const {
@@ -384,6 +388,34 @@ class InspectionScene {
   std::map<std::uint32_t,std::filesystem::path> assets_;
   std::optional<std::uint32_t> node_;
   std::string selected_asset_;
+  struct NavigationInput {
+    jerusalem::SceneGraph graph;
+    std::map<std::uint32_t,std::filesystem::path> assets;
+  };
+  static std::filesystem::path checkpoint_path() {
+    const char* path=SDL_GetAndroidInternalStoragePath();
+    if(!path)throw jerusalem::ParseError("Android checkpoint storage is not ready");
+    return std::filesystem::path(path)/"native-saves/a01-preview.jrs";
+  }
+  NavigationInput prepare_navigation() {
+    const char* storage=SDL_GetAndroidInternalStoragePath();
+    if(!storage)throw jerusalem::ParseError("Android game-data storage is not ready");
+    const auto root=std::filesystem::path(storage)/"game-data";
+    const auto model=jerusalem::read_file(root/"a01-navigation.tsv");
+    auto graph=jerusalem::parse_navigation(std::string(model.begin(),model.end()));
+    auto assets=jerusalem::resolve_scene_assets(root,graph);
+    // The executable supplies fallback labels; optional AOBJ.INI supplies English UI labels.
+    for(const auto& file:std::filesystem::directory_iterator(root)) {
+      auto name=file.path().filename().string();for(auto& c:name) if(c>='a'&&c<='z') c=char(c-'a'+'A');
+      if(name!="AOBJ.INI" || !file.is_regular_file() || file.is_symlink()) continue;
+      try {
+        const auto data=jerusalem::read_file(file.path());const auto labels=jerusalem::parse_localized(std::string(data.begin(),data.end()));
+        for(auto& item:graph.items) for(const auto& label:labels) if(label.key==std::to_string(item.id) && label.language=="ENG" && !label.title.empty() && label.title.size()<96 &&
+            std::all_of(label.title.begin(),label.title.end(),[](unsigned char c){return c>=32 && c<=126;})) {item.name=label.title;break;}
+      } catch(const std::exception& e) {__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Item labels unavailable: %s",e.what());}
+    }
+    return {std::move(graph),std::move(assets)};
+  }
   void publish_inventory(const jerusalem::InteractionState* state=nullptr) {
     if (!state) state=interactions_.get();
     std::ostringstream out;
@@ -392,7 +424,7 @@ class InspectionScene {
     else {
       out << "Collected items: " << state->inventory().size() << '\n';
       for (const auto id:state->inventory()) out << "- " << jerusalem::collectible(*navigation_,id).name << " [" << id << "]\n";
-      out << "\nItem use and combinations are not available yet. This inventory resets when you leave navigation or reload connections; saving is not available.";
+      out << "\nItem use and combinations are not available yet. Save checkpoint keeps your node, view and pickups. Load checkpoint restores them after leaving navigation or reopening the app. Original Windows saves are not supported.";
     }
     std::lock_guard<std::mutex> guard(bridge_mutex);inventory_report=out.str();
   }
@@ -459,23 +491,10 @@ class InspectionScene {
       report("A01 traversal off. Asset inspection controls remain available."); return;
     }
     try {
-      const auto root=std::filesystem::path(SDL_GetAndroidInternalStoragePath())/"game-data";
-      const auto model=jerusalem::read_file(root/"a01-navigation.tsv");
-      auto graph=jerusalem::parse_navigation(std::string(model.begin(),model.end()));
-      auto assets=jerusalem::resolve_scene_assets(root,graph);
+      auto prepared=prepare_navigation();auto& graph=prepared.graph;auto& assets=prepared.assets;
       auto id=graph.nodes.front().id;
       auto camera=jerusalem::Camera{};
       for (const auto& n:graph.nodes) if (n.asset==selected_asset_) { id=n.id; camera=renderer_.camera(); }
-      // The executable supplies fallback labels; optional AOBJ.INI supplies English UI labels.
-      for(const auto& file:std::filesystem::directory_iterator(root)) {
-        auto name=file.path().filename().string();for(auto& c:name) if(c>='a'&&c<='z') c=char(c-'a'+'A');
-        if(name!="AOBJ.INI" || !file.is_regular_file() || file.is_symlink()) continue;
-        try {
-          const auto data=jerusalem::read_file(file.path());const auto labels=jerusalem::parse_localized(std::string(data.begin(),data.end()));
-          for(auto& item:graph.items) for(const auto& label:labels) if(label.key==std::to_string(item.id) && label.language=="ENG" && !label.title.empty() && label.title.size()<96 &&
-              std::all_of(label.title.begin(),label.title.end(),[](unsigned char c){return c>=32 && c<=126;})) {item.name=label.title;break;}
-        } catch(const std::exception& e) {__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Item labels unavailable: %s",e.what());}
-      }
       navigation_=std::move(graph); assets_=std::move(assets);
       interactions_=std::make_unique<jerusalem::InteractionState>(*navigation_);
       enter(id,camera);
@@ -483,6 +502,39 @@ class InspectionScene {
       interactions_.reset(); navigation_.reset(); assets_.clear(); node_.reset(); renderer_.exits({}); renderer_.items({}); ambience_.stop(); publish_inventory();
       report(std::string("A01 traversal unavailable: ")+e.what());
     }
+  }
+  void save_checkpoint() {
+    try {
+      if(!node_ || !navigation_ || !interactions_ || navigation_->items.empty())
+        throw jerusalem::ParseError("start A01 navigation with pickup connections before saving");
+      report("Saving checkpoint...");
+      const jerusalem::Checkpoint checkpoint{*node_,renderer_.checkpoint_camera(),interactions_->inventory()};
+      const auto assets=jerusalem::checkpoint_assets(*navigation_,assets_);
+      jerusalem::write_checkpoint(checkpoint_path(),*navigation_,assets,checkpoint);
+      report("Checkpoint saved at "+jerusalem::scene_node(*navigation_,*node_).asset+" with "+std::to_string(checkpoint.inventory.size())+" item(s).");
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Checkpoint state: action=save node=%u yaw=%.6f pitch=%.6f fov=%.6f inventory=%zu",checkpoint.node,checkpoint.camera.yaw,checkpoint.camera.pitch,checkpoint.camera.fov,checkpoint.inventory.size());
+    }catch(const std::exception& e){report(std::string("Checkpoint save failed: ")+e.what());}
+  }
+  void load_checkpoint() {
+    try {
+      report("Loading checkpoint...");
+      auto prepared=prepare_navigation();
+      const auto tag=jerusalem::checkpoint_assets(prepared.graph,prepared.assets);
+      const auto checkpoint=jerusalem::read_checkpoint(checkpoint_path(),prepared.graph,tag);
+      auto next=std::make_unique<jerusalem::InteractionState>(jerusalem::restore_interactions(prepared.graph,checkpoint));
+      // Invalid/incompatible checkpoint data is rejected before touching the active scene.
+      const auto old_node=node_;auto old_selected=std::move(selected_asset_);
+      auto old_graph=std::move(navigation_);auto old_assets=std::move(assets_);auto old_state=std::move(interactions_);
+      try {
+        navigation_=std::move(prepared.graph);assets_=std::move(prepared.assets);
+        enter(checkpoint.node,checkpoint.camera,next.get());interactions_=std::move(next);
+      }catch(...) {
+        navigation_=std::move(old_graph);assets_=std::move(old_assets);interactions_=std::move(old_state);
+        node_=old_node;selected_asset_=old_selected;publish_inventory();throw;
+      }
+      report("Checkpoint loaded at "+jerusalem::scene_node(*navigation_,checkpoint.node).asset+" with "+std::to_string(checkpoint.inventory.size())+" item(s).");
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Checkpoint state: action=load node=%u yaw=%.6f pitch=%.6f fov=%.6f inventory=%zu",checkpoint.node,checkpoint.camera.yaw,checkpoint.camera.pitch,checkpoint.camera.fov,checkpoint.inventory.size());
+    }catch(const std::exception& e){report(std::string("Checkpoint load failed: ")+e.what());}
   }
   void tap(float x,float y) {
     if (!node_) return;
@@ -579,7 +631,7 @@ Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,js
 }
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeCommand(JNIEnv*,jclass,jint command) {
-  if (command<1 || command>8) return;
+  if (command<1 || command>10) return;
   std::lock_guard<std::mutex> guard(bridge_mutex); commands|=1U<<command;
 }
 extern "C" JNIEXPORT jstring JNICALL
@@ -651,6 +703,8 @@ int main(int,char**) {
       if (action&(1U<<6)) renderer.preview_animation();
       if (action&(1U<<7)) scene.toggle_navigation();
       if (action&(1U<<8)) scene.toggle_navigation(true);
+      if (action&(1U<<9)) scene.save_checkpoint();
+      if (action&(1U<<10)) scene.load_checkpoint();
       if (!lifecycle.background()) audio.update();
       if (!lifecycle.background()) {
         try { renderer.draw(message); }
