@@ -73,7 +73,7 @@ int main(int argc,char** argv){try{
  pixels.pickup(11);check(compose_items(animation,base,pixels.visibility(1)).rgba==base.rgba);
  reject([&]{compose_items(animation,base,{true});});reject([&]{compose_items(AqcAnimation(fixture::animated()),base,{false,true});});
  // Optional private corpus validates all six nodes before/after each pickup.
- if(argc==3){const auto bytes=read_file(argv[1]);auto original=extract_a01_navigation(Bytes(bytes));check(original.items.size()==3);
+ if(argc==3){const auto bytes=read_file(argv[1]);auto original=legacy_navigation(extract_a01_navigation(Bytes(bytes)),2);check(original.items.size()==3);
   InteractionState real(original);
   for(unsigned step=0;step<=original.items.size();++step){
    for(const auto& node:original.nodes){auto input=read_file(resolve_scene_assets(argv[2],original).at(node.id));const auto image=decode_aqc(Bytes(input));const auto composed=compose_items(AqcAnimation(input),image,real.visibility(node.id));check(composed.rgba.size()==image.rgba.size());}

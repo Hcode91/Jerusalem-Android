@@ -57,7 +57,7 @@ struct ArtDirectory {
 struct LocalizedEntry { std::string key, language, title, text; };
 struct DanTriple { std::uint32_t first, second, third; };
 struct Dan { std::vector<DanTriple> levels, intervals; std::uint32_t end; };
-enum class ResourceKind { Unsupported, Bitmap, AqcImage, Wave, CompressedAudio, Archive, LocalizedText, DialogueAnimation, Text };
+enum class ResourceKind { Cinema, Subtitles, Unsupported, Bitmap, AqcImage, Wave, CompressedAudio, Archive, LocalizedText, DialogueAnimation, Text };
 struct ResourceDescription {
   ResourceKind kind;
   std::string summary;

@@ -92,7 +92,7 @@ int main(int argc,char** argv){try{
   const auto executable=read_file(argv[1]);const auto original=extract_a01_navigation(Bytes(executable));
   const auto paths=resolve_scene_assets(argv[2],original);const auto tag=checkpoint_assets(original,paths);
   InteractionState before(original);for(auto it=original.items.rbegin();it!=original.items.rend();++it)before.pickup(it->id);
-  const Checkpoint real{original.items.front().node,{25,0,85},before.inventory()};
+  const Checkpoint real{original.items.front().node,{25,0,85},before.history()};
   const auto native=root/"original-preview.jrs";write_checkpoint(native,original,tag,real);
   const auto saved=read_checkpoint(native,original,checkpoint_assets(original,paths));
   const auto restored=restore_interactions(original,saved);check(saved.node==real.node);check(restored.inventory()==before.inventory());

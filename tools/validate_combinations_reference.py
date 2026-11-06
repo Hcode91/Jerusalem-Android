@@ -48,8 +48,8 @@ def trace(read, first, second):
 def validate(executable, model):
     _, read = capture(executable)  # Checks exact supported SHA-256.
     rows = [shlex.split(line) for line in model.splitlines() if line]
-    if not rows or rows[0] != ['JERUSALEM_A01_NAV_V4']:
-        raise ValueError('require a native V4 model extracted by jinspect')
+    if not rows or rows[0] not in (['JERUSALEM_A01_NAV_V4'], ['JERUSALEM_A01_NAV_V5']):
+        raise ValueError('require a native V4/V5 model extracted by jinspect')
     rules = [row for row in rows if row[0] == 'combine']
     if len(rules) != 1:
         raise ValueError('require exactly the supported consuming A01 combination')

@@ -3,6 +3,8 @@
 #include "jerusalem/aqc_animation.hpp"
 #include "jerusalem/navigation.hpp"
 #include "jerusalem/checkpoint.hpp"
+#include "jerusalem/cinema.hpp"
+#include "jerusalem/dialogue.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -10,7 +12,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|checkpoint FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|dia|cinema|extract-cinema|cinema-raw|extract-cinema-audio|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|checkpoint FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -26,6 +28,36 @@ int main(int argc,char** argv) {
       std::cout << "Native A01 checkpoint: node=" << cp.node << " asset=" << scene_node(graph,cp.node).asset
                 << " yaw=" << cp.camera.yaw << " pitch=" << cp.camera.pitch << " fov=" << cp.camera.fov << '\n';
       for(const auto id:state.inventory())std::cout << "item\t" << id << '\t' << inventory_name(graph,id) << '\n';
+    }
+    else if(mode=="dia") {
+      const auto captions=parse_dia(text);for(const auto& cue:captions.cues)std::cout << cue.time_ms << '\t' << cue.text << '\t' << cue.secondary << '\n';std::cout << captions.end_ms << "\tEND\n";
+    }
+    else if(mode=="cinema" || mode=="extract-cinema" || mode=="cinema-raw" || mode=="extract-cinema-audio") {
+      if(mode!="cinema" && argc!=4)throw ParseError("cinema extraction requires a new output directory");
+      CinemaDecoder decoder(data);const auto& info=decoder.info();std::filesystem::path root;std::ofstream raw;
+      if(mode=="cinema-raw"){if(std::filesystem::exists(argv[3]))throw ParseError("raw output must be new");raw.open(argv[3],std::ios::binary);if(!raw)throw ParseError("cannot create raw output");}
+      if(mode=="extract-cinema" || mode=="extract-cinema-audio"){root=argv[3];if(!std::filesystem::create_directory(root))throw ParseError("output directory already exists");}
+      std::cout << "CNM " << info.width << 'x' << info.height << " frames=" << info.frames << " rate_word=" << info.rate_word << " duration_ticks=" << info.duration_ticks << '\n';
+      unsigned count=0;std::uint64_t exported=0;
+      std::vector<std::vector<std::uint8_t>> pcm(info.sounds.size());
+      while(!decoder.done()) {
+        const auto event=decoder.next();
+        if(event.kind==CinemaEvent::Audio){auto& channel=pcm.at(event.channel);if(channel.size()+event.pcm.size()>max_resource_bytes)throw ParseError("cinema audio export exceeds 64 MiB");channel.insert(channel.end(),event.pcm.begin(),event.pcm.end());}
+        if(event.kind==CinemaEvent::Frame || event.kind==CinemaEvent::Dropped) {
+          std::uint64_t hash=14695981039346656037ULL;for(auto c:decoder.dib())hash=(hash^c)*1099511628211ULL;
+          std::cout << "frame\t" << count << '\t' << std::hex << hash << std::dec << '\n';
+          if(raw.is_open()){exported+=decoder.dib().size();if(exported>1024ULL*1024*1024)throw ParseError("cinema raw export exceeds 1 GiB");raw.write(reinterpret_cast<const char*>(decoder.dib().data()),static_cast<std::streamsize>(decoder.dib().size()));if(!raw)throw ParseError("cannot write raw cinema frame");}
+          if(mode=="extract-cinema") {const auto image=decoder.image();exported+=std::uint64_t(image.width)*image.height*3;if(exported>1024ULL*1024*1024)throw ParseError("cinema image export exceeds 1 GiB");std::ofstream out(root/(std::to_string(count)+".ppm"),std::ios::binary);out << "P6\n" << image.width << ' ' << image.height << "\n255\n";for(std::size_t i=0;i<image.rgba.size();i+=4)out.write(reinterpret_cast<const char*>(image.rgba.data()+i),3);if(!out)throw ParseError("cannot write cinema frame");}
+          ++count;
+        }
+      }
+      if(!root.empty())for(std::size_t c=0;c<pcm.size();++c) {
+        const auto& sound=info.sounds[c];const auto size=static_cast<std::uint32_t>(pcm[c].size());
+        std::ofstream out(root/("audio-"+std::to_string(c)+".wav"),std::ios::binary);
+        const auto word=[&](std::uint32_t value,unsigned width){for(unsigned i=0;i<width;++i)out.put(char(value>>(8*i)));};
+        out.write("RIFF",4);word(36+size,4);out.write("WAVEfmt ",8);word(16,4);word(1,2);word(sound.channels,2);word(sound.rate,4);word(sound.rate*sound.channels*2,4);word(sound.channels*2,2);word(16,2);out.write("data",4);word(size,4);out.write(reinterpret_cast<const char*>(pcm[c].data()),size);if(!out)throw ParseError("cannot write cinema PCM wave");
+      }
+      std::cout << "Decoded " << count << " frame(s); progressive frames; fps=rate_word/100, duration_ms=duration_ticks*10; interlaced unsupported\n";
     }
     else if (mode=="extract-a01-navigation") {
       if (argc!=4) throw ParseError("navigation extraction requires a new output directory");

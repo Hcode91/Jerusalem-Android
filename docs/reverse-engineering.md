@@ -199,3 +199,10 @@ The user confirmed the three supported A01 pickups and inventory. [Milestone 10]
 ## A01 inventory handler and native combination
 
 [Milestone 11](a01-combinations-milestone-11.md) traces 0044b680 and extracts the verified symmetric harness/stone combination. Calls at 0044b6b8..0044b6dc remove 10002 and 10004 and add 10017, whose declaration/label comes from 0047e5af..0047e5c7. An isolated original-handler comparison matches 36 supported-domain argument pairs. Independent native code implements ownership checks, consumption and result insertion with V4 data, Android ingredient dialogs and checkpoint action replay. Host tests pass; new Android results are pending. Bowl/jug effects and palm/character state remain distinct unsupported cases rather than guessed generalizations.
+
+
+## Combined story, subtitle and Cinema implementation
+
+[Milestone 12](a01-story-cinema-milestone-12.md) adds the palm assignment pickup and conditional presentations, consuming matting offer, selected-item target handling, and a verified original spoken response with integer-millisecond DIA subtitles. Original bounded dispatch comparisons match 512 state cases and six response/event cases. V5 models and checkpoint revision 3 retain these effects while validating legacy migration.
+
+The user supplied additional Cinema research. Independent DLL tracing corrected the sound channel encoding (byte 0 plus one), FPS scale (0x0c/100) and duration scale (0x24*10 ms). A new portable C++ decoder handles progressive CNM T/U/S/X and PCM Z/A/B chunks, destination preservation, persistent candidates and bounded allocator padding. All 1090 still checksums match; all 367 frames across three original movies compare byte-for-byte. D=2 also matches a generated three-frame original-routine comparison. The exact format, sample hashes, limitations and reproducible tools are documented in milestone 12. Interlaced decoding, alternative timing modes, all-disc movie coverage and story completion callbacks remain unsupported.

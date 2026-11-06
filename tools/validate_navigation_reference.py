@@ -134,7 +134,7 @@ def validate(executable, model):
             camera = args[7:10] if target == 0x42b9b0 else args[2:5]
             exit.extend(map(real, camera))
     lines = model.splitlines()
-    if lines[0] not in ('JERUSALEM_A01_NAV_V1', 'JERUSALEM_A01_NAV_V2', 'JERUSALEM_A01_NAV_V3'):
+    if lines[0] not in ('JERUSALEM_A01_NAV_V1', 'JERUSALEM_A01_NAV_V2', 'JERUSALEM_A01_NAV_V3', 'JERUSALEM_A01_NAV_V4', 'JERUSALEM_A01_NAV_V5'):
         raise ValueError('unknown native model')
     native_nodes, native_exits, native_ambient = [], [], []
     for line in lines[1:]:
@@ -145,8 +145,12 @@ def validate(executable, model):
             native_exits.append([*map(int, cells[1:12]), *map(float, cells[12:15])])
         elif cells[0] == 'ambient':
             native_ambient.append([*map(int, cells[1:4]), cells[4]])
-        elif cells[0] in ('item', 'item-channel') and lines[0].endswith('V3'):
+        elif cells[0] in ('item', 'item-channel') and lines[0][-1] in '345':
             pass  # Full pickup evidence is checked by validate_pickups_reference.py.
+        elif cells[0] == 'combine' and lines[0][-1] in '45':
+            pass
+        elif cells[0] in ('pickup-set', 'pickup-switch', 'presentation', 'target', 'use', 'dialogue') and lines[0].endswith('V5'):
+            pass  # Separately checked by validate_story_reference.py.
         else:
             raise ValueError('unknown native row')
     if nodes != native_nodes or len(exits) != len(native_exits):

@@ -35,10 +35,10 @@ public class MainActivity extends SDLActivity {
     private static final int PICK_NAVIGATION = 101;
     private static final long FILE_LIMIT = 64L * 1024 * 1024;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private TextView status;
+    private TextView status, subtitles;
     private Button importButton, browseButton;
     private File dataRoot;
-    private String selectedAudioPath, pendingAudioPath;
+    private String selectedAudioPath, selectedMoviePath, pendingAudioPath;
     private String lastNativeStatus = "";
     private boolean importing;
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
@@ -46,6 +46,8 @@ public class MainActivity extends SDLActivity {
         @Override public void run() {
             if (isFinishing() || isDestroyed() || mBrokenLibraries || status == null) return;
             if (!importing) {
+                String caption = nativeSubtitle();
+                subtitles.setText(caption); subtitles.setVisibility(caption.isEmpty() ? View.GONE : View.VISIBLE);
                 String message = nativeStatus();
                 if (!message.equals(lastNativeStatus)) {
                     lastNativeStatus = message;
@@ -58,11 +60,14 @@ public class MainActivity extends SDLActivity {
     private static native byte[] nativeDescribe(String path);
     private static native void nativeOpen(String path);
     private static native boolean nativeSupportsAudio(String path);
+    private static native boolean nativeSupportsCinema(String path);
     private static native void nativeCommand(int command);
     private static native String nativeStatus();
     private static native String nativeInventory();
     private static native String nativeInventoryOptions();
     private static native void nativeCombine(int first, int second);
+    private static native void nativeSelectItem(int item);
+    private static native String nativeSubtitle();
     private static native byte[] nativeExtractA01(byte[] program);
 
     @Override protected String[] getLibraries() { return new String[] {"SDL3", "main"}; }
@@ -83,6 +88,7 @@ public class MainActivity extends SDLActivity {
         status = new TextView(this);
         status.setTextColor(0xFFFFFFFF);
         status.setText("Import original data, then choose an asset. This build is an inspector; gameplay is not implemented.");
+        subtitles = new TextView(this);subtitles.setTextSize(18);subtitles.setTextColor(0xFFFFFFFF);subtitles.setPadding(16, 8, 16, 8);subtitles.setVisibility(View.GONE);panel.addView(subtitles);
         panel.addView(status);
         LinearLayout buttons = new LinearLayout(this);
         importButton = button("Import data", v -> {
@@ -95,6 +101,10 @@ public class MainActivity extends SDLActivity {
         buttons.addView(button("Play audio", v -> {
             if (selectedAudioPath == null) showText("Audio", "Choose a supported PCM WAV, WAC or WAS from Browse assets first.");
             else playWhenFocused(selectedAudioPath);
+        }));
+        buttons.addView(button("Replay movie", v -> {
+            if (selectedMoviePath == null) showText("Cinema", "Choose a supported CI2 movie from Browse assets first.");
+            else openWhenFocused(selectedMoviePath, "Starting movie…");
         }));
         buttons.addView(button("Preview animation", v -> nativeCommand(6)));
         Button navigation = button("A01 navigation", v -> {
@@ -131,7 +141,22 @@ public class MainActivity extends SDLActivity {
     private void showInventory() {
         new AlertDialog.Builder(this).setTitle("Inventory").setMessage(nativeInventory())
                 .setPositiveButton("Combine items", (dialog, which) -> chooseIngredients())
+                .setNeutralButton("Use item", (dialog, which) -> chooseUseItem())
                 .setNegativeButton("Close", null).show();
+    }
+
+    private void chooseUseItem() {
+        if (importing) return;
+        String raw = nativeInventoryOptions();
+        if (raw.isEmpty()) { showText("Use item", "Collect an item first."); return; }
+        String[] entries = raw.trim().split("\n");
+        int[] ids = new int[entries.length];String[] labels = new String[entries.length];
+        for (int i = 0; i < entries.length; ++i) {
+            String[] fields = entries[i].split("\t", 2);if (fields.length != 2) return;
+            ids[i] = Integer.parseInt(fields[0]);labels[i] = fields[1];
+        }
+        new AlertDialog.Builder(this).setTitle("Use item").setItems(labels, (dialog, index) -> nativeSelectItem(ids[index]))
+                .setNegativeButton("Cancel", null).show();
     }
 
     private void chooseIngredients() {
@@ -168,9 +193,13 @@ public class MainActivity extends SDLActivity {
     }
 
     private void playWhenFocused(String path) {
+        openWhenFocused(path, "Starting audio… Use the phone's media-volume controls if it is quiet.");
+    }
+
+    private void openWhenFocused(String path, String message) {
         pendingAudioPath = path;
         lastNativeStatus = "";
-        status.setText("Starting audio… Use the phone's media-volume controls if it is quiet.");
+        status.setText(message);
         if (hasWindowFocus()) {
             pendingAudioPath = null;
             nativeOpen(path);
@@ -216,13 +245,17 @@ public class MainActivity extends SDLActivity {
             worker.execute(() -> {
                 try {
                     byte[] result = nativeDescribe(selected.getAbsolutePath());
-                    String description = new String(result, Charset.forName("windows-1252"));
+                    String description = new String(result, Charset.forName(selected.getName().toUpperCase(Locale.ROOT).endsWith(".DIA") ? "UTF-8" : "windows-1252"));
                     boolean playableAudio = nativeSupportsAudio(selected.getAbsolutePath());
+                    boolean playableMovie = nativeSupportsCinema(selected.getAbsolutePath());
                     runOnUiThread(() -> {
                         if (isFinishing() || isDestroyed()) return;
                         pendingAudioPath = null;
                         selectedAudioPath = playableAudio ? selected.getAbsolutePath() : null;
-                        if (playableAudio) {
+                        selectedMoviePath = playableMovie ? selected.getAbsolutePath() : null;
+                        if (playableMovie) {
+                            openWhenFocused(selectedMoviePath, "Starting movie…");
+                        } else if (playableAudio) {
                             // A modal report would pause SDL while audio is being started.
                             playWhenFocused(selectedAudioPath);
                         } else {

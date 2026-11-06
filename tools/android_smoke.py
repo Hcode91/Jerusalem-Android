@@ -79,7 +79,7 @@ def click_scrolling(text):
     # Search both ways: opening Inventory can leave earlier controls offscreen.
     for direction in (1, -1):
         previous = None
-        for _ in range(6):
+        for _ in range(12):
             xml = current_ui()
             center = control_center(xml, text)
             if center is not None:
@@ -170,6 +170,48 @@ def synthetic_animated_aqc():
     static = struct.pack('<IfI', 1, 0., 0) + frame(0, 0, 0)
     animated = struct.pack('<IfI', 2, 12., 1) + frame(0, 1, 1) + frame(4, 2, 0)
     return base + static + animated
+
+
+def synthetic_story_aqc():
+    base = synthetic_aqc()
+    result = bytearray(base)
+    for index, left, top in ((0, 0, 0), (1, 4, 0), (0, 0, 2), (1, 4, 2)):
+        header = struct.pack('<III', 8, 4, 2) + base[16:32] + struct.pack('<6I', left, left+4, top, top+2, 16, 8)
+        payload = int('0'+f'{index:013b}'+'11', 2).to_bytes(2, 'big')
+        result += struct.pack('<IfII', 1, 0., 0, len(payload)) + header + payload
+    return bytes(result)
+
+
+def synthetic_cinema(frames=3):
+    """Independent progressive CNM with T/U/S frames and stereo raw PCM."""
+    header = bytearray(192)
+    header[:8] = b'CNM UNR\0'
+    struct.pack_into('<I', header, 12, 2500)
+    struct.pack_into('<ii', header, 17, 32, 2)
+    header[25] = 32; header[27] = 1
+    struct.pack_into('<I', header, 28, frames)
+    struct.pack_into('<I', header, 36, frames*4)
+    sound = bytes([1, 16])+struct.pack('<H', 22050)+bytes(12)  # Encoded channels-minus-one.
+    result = header+sound+bytes(frames*8)
+    def bits(values):
+        stream = []
+        for value, count in values:
+            stream.extend((value >> i)&1 for i in range(count))
+        packed = bytearray((len(stream)+7)//8)
+        for i, bit in enumerate(stream): packed[i//8] |= bit << (i%8)
+        return bytes(packed)
+    for i in range(frames):
+        pcm = b''.join(struct.pack('<hh', int(4096*math.sin(2*math.pi*330*j/22050)),
+                                  int(4096*math.sin(2*math.pi*550*j/22050))) for j in range(882))
+        result += b'Z'+struct.pack('<I', len(pcm))+pcm
+        fresh = i in (0, frames-1)
+        if fresh:
+            book = bytes([5 if i == 0 else 90, 7, 9, 0])*4+bytes(2)
+            result += b'T'+struct.pack('<IHH', len(book), 1, 4)+book
+        indices = bits([(0, 1)]+[(v, n) for _ in range(8) for v, n in ((0, 3), (int(fresh), 1))]+[(1, 1)])
+        frame_header = struct.pack('<IIHHII', len(indices), len(indices), 1, 4, 32, 2)+bytes(27)
+        result += (b'U' if fresh else b'S')+frame_header+indices
+    return bytes(result)
 
 
 def main():
@@ -405,7 +447,73 @@ def main():
                  'Traversal preview did not switch off')
         wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Leaving traversal did not close ambient playback')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        # Palm + consuming character offer + revision-3 persistence, with original-free data.
+        for name in ('STORY_A', 'STORY_B'):
+            adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}.aqc'", input=synthetic_story_aqc())
+        story_model = ('JERUSALEM_A01_NAV_V5\nnode 1 STORY_A 4\nnode 2 STORY_B 4\n'
+                       'exit 1 0 2 0 1 0 -750 3600 750 53 0 0 0 85\n'
+                       'item 10 1 0 -750 3600 750 60 0 50 1 "Story harness"\nitem-channel 10 1 0\n'
+                       'item 11 1 0 -750 3600 750 60 0 50 1 "Story matting"\nitem-channel 11 1 1\n'
+                       'item 12 2 0 -750 3600 750 60 0 51 0 "Story palm"\nitem-channel 12 2 0\npickup-set 12 1\n'
+                       'presentation 40 0 2 2\npresentation 40 1 2 3\npickup-switch 12 52 1 40 1 0\n'
+                       'target 30 2 0 -750 3600 750 62 0 0 "Successor"\n'
+                       'target 31 2 0 -750 3600 750 62 0 1 "Offer"\n'
+                       'use 1 31 11 52 1 30 51 40 1 0 0 1\n')
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=story_model.encode())
+        adb('logcat', '-c')
+        click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal: STORY_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V5 story scene did not start')
+        for expected in (b'Collected: Story harness [10]', b'Collected: Story matting [11]', b'A01 traversal: STORY_B.', b'Collected: Story palm [12]'):
+            adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+            wait_for(lambda: expected in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V5 pickup/traversal sequence failed')
+        click_scrolling('Inventory'); click('Use item'); click('Story matting')
+        wait_for(lambda: b'Using Story matting.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Item-use selection did not reach native engine')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Item use state: rule=1 target=31 item=11 consumed=1 inventory=2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Character offer did not consume matting')
+        click_scrolling('Save checkpoint')
+        wait_for(lambda: b'Checkpoint state: action=save' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Character checkpoint was not saved')
+        story_checkpoint = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
+        if len(story_checkpoint) != 84 or struct.unpack_from('<I', story_checkpoint, 12)[0] != 3 or struct.unpack_from('<4I', story_checkpoint, 64) != (10, 11, 12, 0x40000001):
+            raise RuntimeError('Story checkpoint lost assignment/use action order')
+        adb('shell', 'am', 'force-stop', PACKAGE); adb('logcat', '-c')
+        adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
+        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story restart failed')
+        click_scrolling('Load checkpoint')
+        wait_for(lambda: b'Checkpoint state: action=load node=2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story checkpoint did not restore')
+        click_scrolling('Inventory')
+        wait_for(lambda: b'Collected items: 2' in current_ui() and b'Story palm' in current_ui() and b'Story matting' not in current_ui(), 'Story inventory did not restore consumption/palm')
+        click('Close'); click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story session did not stop')
+        # Same native item-use path starts generated speech and genuinely parsed DIA cues.
+        voice_model = ('JERUSALEM_A01_NAV_V5\nnode 1 STORY_A 4\nnode 2 STORY_B 4\n'
+                       'item 10 2 0 -750 3600 750 60 0 50 1 "Voice harness"\nitem-channel 10 2 0\n'
+                       'target 32 2 0 -750 3600 750 62 0 1 "Feedback"\n'
+                       'use 2 32 10 0 0 0 0 0 0 0 60 0\ndialogue 60 A01 SYNTH_SPEECH\n')
+        adb('shell', f'run-as {PACKAGE} mkdir -p files/game-data/data/a01/sound/eng files/game-data/data/a01/dia/eng')
+        sound = io.BytesIO()
+        with wave.open(sound, 'wb') as writer:
+            writer.setnchannels(1); writer.setsampwidth(2); writer.setframerate(22050)
+            writer.writeframes(b''.join(struct.pack('<h', int(4096*math.sin(2*math.pi*330*j/22050))) for j in range(44100)))
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/data/a01/sound/eng/SYNTH_SPEECH.WAC'", input=sound.getvalue())
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/data/a01/dia/eng/SYNTH_SPEECH.DIA'", input=b'0 Synthetic first\r\n400 Synthetic second\r\n1500 END\r\n')
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=voice_model.encode())
+        adb('logcat', '-c'); click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal: STORY_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Voice scene did not retain selected node')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Collected: Voice harness [10]' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Voice ingredient missing')
+        click_scrolling('Inventory'); click('Use item'); click('Voice harness')
+        wait_for(lambda: b'Using Voice harness.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Voice selection failed')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Dialogue started: id=60 stem=SYNTH_SPEECH' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Dialogue did not resolve/play audio')
+        wait_for(lambda: b'text=Synthetic second' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'DIA timeline did not advance')
+        click_scrolling('A01 navigation')
+        # Movie playback has no report dialog and uses header timing plus stereo PCM.
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-movie.CI2'", input=synthetic_cinema(100))
+        adb('logcat', '-c'); click_scrolling('Browse assets'); click('synthetic-movie.CI2')
+        wait_for(lambda: b'Cinema frame: index=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native cinema preview did not advance')
+        wait_for(lambda: b'Cinema preview decoded 100 frames.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Cinema did not reach EOF at its declared frame count')
+        wait_for(lambda: b'Audio buffer drained: synthetic-movie.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Movie PCM did not reach SDL output')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

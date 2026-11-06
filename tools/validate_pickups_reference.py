@@ -57,8 +57,8 @@ def trace(read, start, value):
 def validate(executable, model):
     _, read = capture(executable)  # Checks the exact analyzed executable SHA-256.
     lines = model.splitlines()
-    if not lines or lines[0] not in ('JERUSALEM_A01_NAV_V3', 'JERUSALEM_A01_NAV_V4'):
-        raise ValueError('require a native V3/V4 model extracted by jinspect')
+    if not lines or lines[0] not in ('JERUSALEM_A01_NAV_V3', 'JERUSALEM_A01_NAV_V4', 'JERUSALEM_A01_NAV_V5'):
+        raise ValueError('require a native V3/V4/V5 model extracted by jinspect')
     items = {}
     for line in lines[1:]:
         row = shlex.split(line)
@@ -67,6 +67,8 @@ def validate(executable, model):
             items[values[0]] = dict(values=values, name=row[11], channels=[])
         elif row[0] == 'item-channel':
             items[int(row[1])]['channels'].append(list(map(int, row[2:4])))
+    assigned = {int(shlex.split(line)[1]) for line in lines[1:] if line.startswith('pickup-set ')}
+    items = {key: item for key, item in items.items() if key not in assigned}
     if len(items) != 3:
         raise ValueError('require all three supported original pickups')
     for start in CASES:
