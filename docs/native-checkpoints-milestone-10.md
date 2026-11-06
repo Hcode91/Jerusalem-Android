@@ -1,5 +1,7 @@
 # Milestone 10: native A01 preview checkpoints
 
+**Device result:** the user confirmed save/load works. The revision-1 format and original milestone validation below are historical; [milestone 11](a01-combinations-milestone-11.md) adds combination history, revision 2 and explicit legacy migration.
+
 The user confirmed collecting all three supported items and viewing them in Inventory on Android. This milestone adds one manual checkpoint slot for the existing A01 preview, shared by the Android app and Linux SDL2 viewer. It saves the current node, 360° camera and collected-item order. It does not implement original Windows `.ARS` saves or serialize unimplemented story/puzzle systems.
 
 ## Behavior
@@ -68,7 +70,7 @@ All **eight host CTest groups** pass with address/undefined sanitizers and the d
 
 The SDL2 smoke test saves and loads in separate viewer processes. Python independently checks native file offsets, little-endian integers, IEEE754 camera fields and CRC32 against `struct`/`zlib`. The private original-data comparison restores a reversed three-item pickup sequence and verifies identical inventory/counter/visibility and composited pixels across all six original nodes (17 additional assertions). No original data is committed or used in CI.
 
-The Actions Android smoke test now saves a synthetic collected item, force-stops/relaunches the app, loads the checkpoint and verifies saved node/camera/inventory, item-hotspot removal and corrupt-load preservation of active inventory. It keeps the existing audio/lifecycle tests. The new Android build, emulator execution and phone results are pending; all APK builds remain exclusive to Actions.
+The Actions Android smoke test now saves a synthetic collected item, force-stops/relaunches the app, loads the checkpoint and verifies saved node/camera/inventory, item-hotspot removal and corrupt-load preservation of active inventory. It keeps the existing audio/lifecycle tests. The user subsequently confirmed save/load on Android; all APK builds remain exclusive to Actions.
 
 ## Next phone check
 

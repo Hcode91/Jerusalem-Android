@@ -357,13 +357,51 @@ def main():
                  'Invalid checkpoint replaced the active inventory')
         click('Close')
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-preview.jrs'", input=checkpoint)
+        # A separate V4 synthetic session exercises accessible ingredient selection and persistence.
+        click_scrolling('A01 navigation')
+        upgraded = model.replace('NAV_V3', 'NAV_V4') + (
+            'item 11 2 0 -750 3600 750 60 0 50 1 "Synthetic stone"\n'
+            'item-channel 11 2 0\ncombine 10 11 20 "Synthetic sling"\n')
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=upgraded.encode())
+        adb('logcat', '-c')
+        click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal: SYNTH_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 scene did not start')
+        for expected in (b'A01 traversal: SYNTH_B.', b'Collected: Synthetic pickup [10]', b'Collected: Synthetic stone [11]'):
+            adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+            wait_for(lambda: expected in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 traversal/pickup failed')
+        click_scrolling('Inventory')
+        click('Combine items')
+        click('Synthetic stone')
+        click('Synthetic pickup')
+        wait_for(lambda: b'Combination state: first=11 second=10 result=20 inventory=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Reverse-order combination did not consume ingredients and add result')
+        click_scrolling('Inventory')
+        wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic sling [20]' in current_ui(), 'Combination result missing from inventory')
+        click('Close')
+        click_scrolling('Save checkpoint')
+        wait_for(lambda: b'Checkpoint state: action=save' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination checkpoint not saved')
+        combined = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
+        if len(combined) != 80 or struct.unpack_from('<I', combined, 12)[0] != 2 or struct.unpack_from('<III', combined, 64) != (10, 11, 0x80000014):
+            raise RuntimeError('Combination checkpoint lacks the expected revision/action sequence')
+        adb('shell', 'am', 'force-stop', PACKAGE)
+        adb('logcat', '-c')
+        adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
+        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination restart failed')
+        click_scrolling('Load checkpoint')
+        wait_for(lambda: b'Checkpoint state: action=load' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination checkpoint did not reload')
+        click_scrolling('Inventory')
+        wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic sling [20]' in current_ui(), 'Reloaded result missing or ingredients returned')
+        click('Close')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Consumed ingredients became collectible again after loading')
         (OUTPUT / 'a01-traversal-synthetic.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('A01 navigation')
         wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Traversal preview did not switch off')
         wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Leaving traversal did not close ambient playback')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

@@ -12,8 +12,8 @@
 #endif
 namespace jerusalem {
 namespace {
-constexpr std::uint32_t format_version=1,state_revision=1;
-constexpr std::size_t header_size=64,max_size=header_size+16*4+4;
+constexpr std::uint32_t format_version=1;
+constexpr std::size_t header_size=64,max_size=header_size+32*4+4;
 class Fingerprint {
   std::uint64_t value_=14695981039346656037ULL;
  public:
@@ -38,15 +38,21 @@ void validate(const SceneGraph& graph,const Checkpoint& cp){
   if(graph.items.empty())throw ParseError("checkpoint requires pickup connections; refresh A01 navigation");
   const auto& c=cp.camera;
   if(!std::isfinite(c.yaw) || c.yaw<0 || c.yaw>=360 || !std::isfinite(c.pitch) || std::abs(c.pitch)>90 ||
-     !std::isfinite(c.fov) || c.fov<30 || c.fov>87 || cp.inventory.size()>graph.items.size())throw ParseError("invalid checkpoint camera/inventory");
-  std::set<std::uint32_t> ids;
-  for(const auto id:cp.inventory){collectible(graph,id);if(!ids.insert(id).second)throw ParseError("duplicate checkpoint item");}
+     !std::isfinite(c.fov) || c.fov<30 || c.fov>87 || cp.inventory.size()>graph.items.size()+graph.combinations.size())throw ParseError("invalid checkpoint camera/inventory");
+  InteractionState replay(graph);
+  for(const auto action:cp.inventory) {
+    if(action&0x80000000U) {
+      const auto id=action&0x7fffffffU;
+      const auto rule=std::find_if(graph.combinations.begin(),graph.combinations.end(),[&](const Combination& c){return c.result==id;});
+      if(rule==graph.combinations.end() || !replay.combine(rule->first,rule->second))throw ParseError("invalid checkpoint combination sequence");
+    }else if(!replay.pickup(action))throw ParseError("duplicate checkpoint pickup");
+  }
 }
 }
 std::uint64_t checkpoint_rules(const SceneGraph& graph){
-  auto stable=graph;for(auto& item:stable.items)item.name="ITEM"; // Display translations do not change game state compatibility.
+  auto stable=graph;for(auto& item:stable.items)item.name="ITEM";for(auto& c:stable.combinations)c.name="ITEM"; // Display translations do not change game state compatibility.
   const auto model=write_navigation(stable);
-  Fingerprint fingerprint;fingerprint.word(state_revision);fingerprint.bytes(Bytes(reinterpret_cast<const std::uint8_t*>(model.data()),model.size()));return fingerprint.value();
+  Fingerprint fingerprint;fingerprint.word(graph.combinations.empty()?1:2);fingerprint.bytes(Bytes(reinterpret_cast<const std::uint8_t*>(model.data()),model.size()));return fingerprint.value();
 }
 std::uint64_t checkpoint_assets(const SceneGraph& graph,const std::map<std::uint32_t,std::filesystem::path>& assets){
   validate_navigation(graph);
@@ -63,26 +69,32 @@ std::uint64_t checkpoint_assets(const SceneGraph& graph,const std::map<std::uint
   return fingerprint.value();
 }
 InteractionState restore_interactions(const SceneGraph& graph,const Checkpoint& cp){
-  validate(graph,cp);InteractionState state(graph);for(const auto id:cp.inventory)state.pickup(id);return state;
+  validate(graph,cp);InteractionState state(graph);for(const auto action:cp.inventory) {
+    if(action&0x80000000U) {
+      const auto& rule=*std::find_if(graph.combinations.begin(),graph.combinations.end(),[&](const Combination& c){return c.result==(action&0x7fffffffU);});
+      state.combine(rule.first,rule.second);
+    }else state.pickup(action);
+  }return state;
 }
 std::vector<std::uint8_t> encode_checkpoint(const SceneGraph& graph,std::uint64_t assets,const Checkpoint& cp){
   validate(graph,cp);
   std::vector<std::uint8_t> out{'J','R','N','S','A','V','E',0};
-  integer(out,format_version,4);integer(out,state_revision,4);integer(out,checkpoint_rules(graph),8);integer(out,assets,8);
+  integer(out,format_version,4);integer(out,graph.combinations.empty()?1:2,4);integer(out,checkpoint_rules(graph),8);integer(out,assets,8);
   integer(out,cp.node,4);integer(out,cp.inventory.size(),4);real(out,cp.camera.yaw);real(out,cp.camera.pitch);real(out,cp.camera.fov);
   for(const auto id:cp.inventory)integer(out,id,4);
   integer(out,crc32(Bytes(out)),4);return out;
 }
 Checkpoint decode_checkpoint(Bytes b,const SceneGraph& graph,std::uint64_t assets){
   if(b.size()<header_size+4 || b.size()>max_size || !b.is(0,std::string("JRNSAVE\0",8)))throw ParseError("not a supported native A01 checkpoint");
-  if(b.u32(8)!=format_version || b.u32(12)!=state_revision)throw ParseError("unsupported native checkpoint version/state revision");
+  if(b.u32(8)!=format_version || (b.u32(12)!=1 && b.u32(12)!=2))throw ParseError("unsupported native checkpoint version/state revision");
   const auto count=b.u32(36);
-  if(count>16 || b.size()!=header_size+std::size_t(count)*4+4)throw ParseError("truncated or malformed checkpoint length");
+  if(count>32 || b.size()!=header_size+std::size_t(count)*4+4)throw ParseError("truncated or malformed checkpoint length");
   if(crc32(b.slice(0,b.size()-4))!=b.u32(b.size()-4))throw ParseError("checkpoint checksum mismatch");
-  if(integer64(b,16)!=checkpoint_rules(graph))throw ParseError("checkpoint scene rules differ from the current connections");
+  auto compatible=graph;if(b.u32(12)==1)compatible.combinations.clear();
+  if(integer64(b,16)!=checkpoint_rules(compatible))throw ParseError("checkpoint scene rules differ from the current connections");
   if(integer64(b,24)!=assets)throw ParseError("checkpoint original node data differs from imported assets");
   Checkpoint cp{b.u32(32),{real(b,40),real(b,48),real(b,56)},{}};
-  for(std::size_t i=0;i<count;++i)cp.inventory.push_back(b.u32(header_size+i*4));
+  for(std::size_t i=0;i<count;++i){const auto action=b.u32(header_size+i*4);if(b.u32(12)==1 && (action&0x80000000U))throw ParseError("combination in legacy checkpoint");cp.inventory.push_back(action);}
   validate(graph,cp);return cp;
 }
 void write_checkpoint(const std::filesystem::path& path,const SceneGraph& graph,std::uint64_t assets,const Checkpoint& cp){

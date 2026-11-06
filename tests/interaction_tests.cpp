@@ -48,6 +48,24 @@ int main(int argc,char** argv){try{
  for(const auto p:{0,5,6,7,12,13,14,15,16,17,22,27,29,34,35,36,37,38,39,40,41,46,51,56,57,58,63,68,69,70,75,76,77,78}){auto bad=b;bad[p]^=1;reject([&]{parse_pickup_effect(Bytes(bad),0x500000);});}
  for(const auto p:{1,18,42,52,64}){auto bad=b;bad[p]^=1;reject([&]{parse_pickup_effect(Bytes(bad),0x500000);});}
  reject([&]{parse_pickup_effect(Bytes(b),0xfffffff0U);});
+ auto combos=g;combos.combinations={{10,11,20,"Synthetic result"}};
+ const auto v4=write_navigation(combos);check(v4.find("NAV_V4")!=std::string::npos);check(write_navigation(parse_navigation(v4))==v4);
+ for(bool reverse:{false,true}) {
+  InteractionState c(combos);check(!c.combine(10,11));c.pickup(10);check(!c.combine(10,11));c.pickup(11);
+  const auto visible=c.visibility(2);const auto counter=c.variable(50);const auto markers=c.milestones();
+  check(c.combine(reverse?11:10,reverse?10:11)==20);check(c.inventory()==std::vector<std::uint32_t>{20});
+  check(c.collected(10) && c.collected(11) && !c.pickup(10) && !c.pickup(11));
+  check(c.visibility(2)==visible && c.variable(50)==counter && c.milestones()==markers);
+  check(c.history()==std::vector<std::uint32_t>({10,11,0x80000014U}));check(!c.combine(10,11));check(!c.combine(20,20));check(!c.combine(20,999));
+ }
+ check(inventory_name(combos,20)=="Synthetic result");check(inventory_name(combos,10)==g.items[0].name);reject([&]{inventory_name(combos,999);});
+ for(unsigned n=0;n<11;++n){auto bad=combos;auto& c=bad.combinations[0];switch(n){
+ case 0:c.first=999;break;case 1:c.second=c.first;break;case 2:c.result=0;break;case 3:c.result=c.first;break;
+ case 4:c.result=0x80000000U;break;case 5:c.name="";break;case 6:c.name="bad\nname";break;case 7:c.name=std::string(96,'a');break;
+ case 8:bad.combinations.push_back(c);break;case 9:bad.combinations.push_back({11,10,21,"Other"});break;
+ case 10:bad.combinations.resize(17,c);break;
+ }reject([&]{validate_navigation(bad);});}
+ reject([&]{parse_navigation(v4+"combine 10 11 20 \"Extra\" junk\n");});
  auto data=fixture::base();for(unsigned left:{0,4}){fixture::integer(data,1);fixture::real(data,0);fixture::integer(data,0);fixture::append(data,fixture::frame(left,left?2:0,1));}
  const AqcAnimation animation(data);const auto base=decode_aqc(Bytes(data));InteractionState pixels(g);
  const auto both=compose_items(animation,base,pixels.visibility(1));check(both.rgba!=base.rgba && both.rgba[1]==252);

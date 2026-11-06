@@ -44,6 +44,23 @@ int main(int argc,char** argv){try{
  reject([&]{decode_checkpoint(Bytes(bytes),g,asset_tag+1);});
  auto changed=g;changed.exits[0].enabled=false;reject([&]{decode_checkpoint(Bytes(bytes),changed,asset_tag);});
  auto renamed=g;renamed.items[0].name="Translated label";check(checkpoint_rules(renamed)==checkpoint_rules(g));check(decode_checkpoint(Bytes(bytes),renamed,asset_tag).inventory==cp.inventory);
+ auto combos=g;combos.combinations={{10,12,20,"Synthetic sling"}};
+ // Revision-1 checkpoints migrate only when their complete legacy rule/data hashes match.
+ check(decode_checkpoint(Bytes(bytes),combos,asset_tag).inventory==cp.inventory);
+ const Checkpoint combined{2,{90.5,-12.25,64},{10,12,0x80000014U,11}};
+ const auto combined_bytes=encode_checkpoint(combos,asset_tag,combined);
+ check(Bytes(combined_bytes).u32(12)==2);
+ const auto combined_state=restore_interactions(combos,decode_checkpoint(Bytes(combined_bytes),combos,asset_tag));
+ check(combined_state.inventory()==std::vector<std::uint32_t>({20,11}));check(combined_state.variable(50)==3);
+ check(combined_state.collected(10) && combined_state.collected(12));check(!combined_state.visibility(2)[1]);
+ check(combined_state.history()==combined.inventory);
+ auto translated=combos;translated.combinations[0].name="Translated result";check(checkpoint_rules(translated)==checkpoint_rules(combos));
+ auto different=combos;different.combinations[0].result=21;reject([&]{decode_checkpoint(Bytes(combined_bytes),different,asset_tag);});
+ reject([&]{decode_checkpoint(Bytes(combined_bytes),g,asset_tag);});
+ for(const auto& history:std::vector<std::vector<std::uint32_t>>{{0x80000014U},{10,0x80000014U},{10,12,0x80000015U},{10,12,0x80000014U,0x80000014U},{10,12,0x80000014U,10}}) {
+  auto invalid=combined;invalid.inventory=history;reject([&]{encode_checkpoint(combos,asset_tag,invalid);});reject([&]{restore_interactions(combos,invalid);});
+ }
+ for(std::size_t i=0;i<combined_bytes.size();++i){auto broken=combined_bytes;broken[i]^=1;reject([&]{decode_checkpoint(Bytes(broken),combos,asset_tag);});}
  for(unsigned test=0;test<10;++test){auto bad=cp;switch(test){
  case 0:bad.node=99;break;case 1:bad.camera.yaw=360;break;case 2:bad.camera.yaw= -1;break;
  case 3:bad.camera.pitch=91;break;case 4:bad.camera.fov=29;break;case 5:bad.camera.fov=88;break;

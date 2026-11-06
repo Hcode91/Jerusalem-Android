@@ -54,6 +54,32 @@ def main():
             raise RuntimeError('Native checkpoint does not match its documented LE/IEEE754/CRC32 format')
         print('PASS: native checkpoint saved and loaded by separate SDL2 viewer processes')
 
+        model.write_text(model.read_text().replace('NAV_V3', 'NAV_V4') +
+                         'item 11 1 0 -750 3600 750 60 0 50 1 "Synthetic stone"\n'
+                         'item-channel 11 2 0\ncombine 10 11 20 "Synthetic sling"\n')
+        command = [sys.argv[1], str(Path(directory) / 'SYNTH_A.aqc'), '--navigation', str(model),
+                   '--checkpoint', str(checkpoint), '--frames', '2']
+        def launch(options):
+            run = subprocess.run(command+options, env=env, capture_output=True, text=True, timeout=30)
+            if run.returncode:
+                raise RuntimeError(f'SDL2 combination failed: {run.stdout}\n{run.stderr}')
+            return run.stdout
+        launch(['--save-checkpoint'])
+        # Independent synthetic checkpoint construction uses the genuine model/data digest.
+        # It represents two pickups; the native loader must reconstruct their visibility/counter.
+        prefix = bytearray(checkpoint.read_bytes()[:64])
+        struct.pack_into('<I', prefix, 36, 2)
+        owned = prefix+struct.pack('<II', 10, 11)
+        checkpoint.write_bytes(owned+struct.pack('<I', zlib.crc32(owned)))
+        if 'Combined: Synthetic sling' not in launch(['--load-checkpoint', '--combine', '11', '10', '--save-checkpoint']):
+            raise RuntimeError('SDL2 did not perform the reverse-order native combination')
+        combined = checkpoint.read_bytes()
+        if struct.unpack_from('<I', combined, 12)[0] != 2 or struct.unpack_from('<III', combined, 64) != (10, 11, 0x80000014):
+            raise RuntimeError('SDL2 did not preserve the combination action log')
+        if 'inventory=1' not in launch(['--load-checkpoint']):
+            raise RuntimeError('SDL2 combination result did not survive process restart')
+        print('PASS: native inventory combination, checkpoint action log and independent-process restoration')
+
 
 if __name__ == '__main__':
     main()

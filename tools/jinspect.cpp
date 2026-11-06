@@ -25,7 +25,7 @@ int main(int argc,char** argv) {
       const auto state=restore_interactions(graph,cp);
       std::cout << "Native A01 checkpoint: node=" << cp.node << " asset=" << scene_node(graph,cp.node).asset
                 << " yaw=" << cp.camera.yaw << " pitch=" << cp.camera.pitch << " fov=" << cp.camera.fov << '\n';
-      for(const auto id:state.inventory())std::cout << "item\t" << id << '\t' << collectible(graph,id).name << '\n';
+      for(const auto id:state.inventory())std::cout << "item\t" << id << '\t' << inventory_name(graph,id) << '\n';
     }
     else if (mode=="extract-a01-navigation") {
       if (argc!=4) throw ParseError("navigation extraction requires a new output directory");
@@ -34,7 +34,7 @@ int main(int argc,char** argv) {
       if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
       std::ofstream out(root/"a01-navigation.tsv"); out << write_navigation(graph);
       if (!out) throw ParseError("cannot write native navigation model");
-      std::cout << graph.nodes.size() << " nodes, " << graph.exits.size() << " exits, " << graph.ambient.size() << " ambient bindings, " << graph.items.size() << " collectibles extracted without executing the program\n";
+      std::cout << graph.nodes.size() << " nodes, " << graph.exits.size() << " exits, " << graph.ambient.size() << " ambient bindings, " << graph.items.size() << " collectibles, " << graph.combinations.size() << " combinations extracted without executing the program\n";
     }
     else if (mode=="map-panorama") {
       if (argc!=10) throw ParseError("map-panorama FILE YAW PITCH FOV WIDTH HEIGHT COLUMNS ROWS");

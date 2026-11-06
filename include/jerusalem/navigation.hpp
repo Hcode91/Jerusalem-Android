@@ -23,7 +23,8 @@ struct Collectible {
   std::string name;
   std::vector<ItemChannel> channels;
 };
-struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; std::vector<Collectible> items; };
+struct Combination { std::uint32_t first,second,result; std::string name; };
+struct SceneGraph { std::vector<SceneNode> nodes; std::vector<Exit> exits; std::vector<SceneAmbient> ambient; std::vector<Collectible> items; std::vector<Combination> combinations; };
 SceneGraph extract_a01_navigation(Bytes executable);
 std::string write_navigation(const SceneGraph& graph);
 SceneGraph parse_navigation(const std::string& text);
