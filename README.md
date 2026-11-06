@@ -19,7 +19,9 @@ An independent C++17 engine reimplementation with an SDL2 desktop panorama viewe
 - Native SDL3 Android entry point, rendering and audio backends, inspector scene, touch image panning, zoom controls, lifecycle audio pause/resume, diagnostics, and Android Storage Access Framework folder import.
 - Parser regression tests, truncation checks, deterministic malformed-input tests, and an ARM64 debug APK GitHub Actions workflow.
 
-The latest combined milestone adds **palm collection, a verified matting-to-character action, one spoken response with timed DIA subtitles, and native progressive CI2 playback**. The C++ Cinema decoder matches all 367 frames of three complete original movies byte-for-byte. SDL2 also has a movie player, and host tools export PNG frames and stereo WAV tracks. See [story, dialogue and Cinema evidence](docs/a01-story-cinema-milestone-12.md), including corrections to preliminary timing/audio assumptions and the next device checks. New Android results remain pending.
+The latest milestone adds **Start A01 story**: the original opening, first encounter, timed escape, puzzle-screen backgrounds/hotspots, character/item actions and chained native movies/dialogue. It stops before the next topic puzzle; **full A01 and story saves are unfinished**. Existing navigation-preview checkpoints remain available. See [the implemented route, evidence, limitations and phone test](docs/a01-story-milestone-13.md). Android build/device results for this milestone remain pending.
+
+The progressive C++ Cinema decoder still matches all 367 frames of three complete original movies byte-for-byte. SDL2 has a desktop movie player, and host tools export PNG frames and stereo WAV tracks. See [Cinema format evidence](docs/a01-story-cinema-milestone-12.md).
 
 Both complete European disc images are now available privately. The [Disc 2 survey](docs/disc2-corpus-survey.md) adds 119 successfully decoded full-node images and seven validated AT3 directories; new-area gameplay remains unimplemented. Progressive Cinema decoding is now implemented for the verified subset; interlaced variants remain unsupported.
 

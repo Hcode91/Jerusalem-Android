@@ -28,6 +28,7 @@ CinemaDecoder::CinemaDecoder(std::vector<std::uint8_t> bytes):bytes_(std::move(b
   b.require(position_,std::size_t(info_.frames)*8);position_+=std::size_t(info_.frames)*8;
   if(position_>=bytes_.size())throw ParseError("CNM chunk stream is missing");
   surface_.resize(std::size_t(w)*h*4,0);
+  coverage_.resize(std::size_t(w)*h,0);
 }
 void CinemaDecoder::codebook(Bytes data,unsigned d,unsigned n) {
   if((d!=2 && d!=4) || !n || n>4095)throw ParseError("unsupported CNM codebook dimensions");
@@ -79,7 +80,7 @@ void CinemaDecoder::frame(Bytes h,Bytes data) {
       indices.push_back(value);
     }
   }
-  for(std::size_t k=0;k<total;++k)if(indices[k]){const auto& vector=book_.at(indices[k]);std::copy(vector.begin(),vector.begin()+d*4,surface_.begin()+k*d*4);}
+  for(std::size_t k=0;k<total;++k)if(indices[k]){const auto& vector=book_.at(indices[k]);std::copy(vector.begin(),vector.begin()+d*4,surface_.begin()+k*d*4);std::fill(coverage_.begin()+k*d,coverage_.begin()+(k+1)*d,255);}
 }
 CinemaEvent CinemaDecoder::next() {
   const Bytes b(bytes_);b.require(position_,1);const auto tag=b.u8(position_++);
@@ -102,6 +103,11 @@ CinemaEvent CinemaDecoder::next() {
 Bitmap CinemaDecoder::image() const {
   Bitmap result{info_.width,info_.height,std::vector<std::uint8_t>(surface_.size())};
   for(unsigned y=0;y<info_.height;++y)for(unsigned x=0;x<info_.width;++x){const auto s=(std::size_t(info_.height-1-y)*info_.width+x)*4,d=(std::size_t(y)*info_.width+x)*4;result.rgba[d]=surface_[s+2];result.rgba[d+1]=surface_[s+1];result.rgba[d+2]=surface_[s];result.rgba[d+3]=255;}
+  return result;
+}
+Bitmap CinemaDecoder::sprite() const {
+  auto result=image();
+  for(unsigned y=0;y<info_.height;++y)for(unsigned x=0;x<info_.width;++x)result.rgba[(std::size_t(y)*info_.width+x)*4+3]=coverage_[std::size_t(info_.height-1-y)*info_.width+x];
   return result;
 }
 }

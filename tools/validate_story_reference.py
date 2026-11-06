@@ -11,7 +11,7 @@ ARITIES = {0x42c5e0: 0, 0x42c600: 0, 0x42c620: 0, 0x42c1d0: 1, 0x42c1a0: 2,
            0x42c3a0: 1, 0x42c460: 1, 0x42a9a0: 2, 0x42a920: 2, 0x429d70: 1, 0x429d50: 1, 0x42ccd0: 2}
 
 
-def trace(read, target, item, variables, using=False, event=0):
+def trace(read, target, item, variables, using=False, event=0, owned=()):
     from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_PROT_READ, UC_PROT_WRITE, UC_PROT_EXEC, UC_HOOK_CODE
     from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EAX, UC_X86_REG_EIP
     cpu = Uc(UC_ARCH_X86, UC_MODE_32)
@@ -41,6 +41,7 @@ def trace(read, target, item, variables, using=False, event=0):
             if address == 0x42c5e0: machine.reg_write(UC_X86_REG_EAX, int(using))
             elif address == 0x42c600: machine.reg_write(UC_X86_REG_EAX, item)
             elif address == 0x42c1d0: machine.reg_write(UC_X86_REG_EAX, variables.get(args[0], 0))
+            elif address == 0x42c550: machine.reg_write(UC_X86_REG_EAX, int(args[0] in owned))
             elif address != 0x42c620: calls.append((address, args))
         elif not 0x44a620 <= address < address+size <= 0x44b5f8:
             raise ValueError(f'story reference escaped handler at {address:#x}')

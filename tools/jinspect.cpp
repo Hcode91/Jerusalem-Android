@@ -5,6 +5,7 @@
 #include "jerusalem/checkpoint.hpp"
 #include "jerusalem/cinema.hpp"
 #include "jerusalem/dialogue.hpp"
+#include "jerusalem/stage.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -12,7 +13,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|dia|cinema|extract-cinema|cinema-raw|extract-cinema-audio|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|checkpoint FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|dia|cinema|extract-cinema|cinema-raw|extract-cinema-audio|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|extract-a01-stage|stage|stage-art|checkpoint FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -58,6 +59,21 @@ int main(int argc,char** argv) {
         out.write("RIFF",4);word(36+size,4);out.write("WAVEfmt ",8);word(16,4);word(1,2);word(sound.channels,2);word(sound.rate,4);word(sound.rate*sound.channels*2,4);word(sound.channels*2,2);word(16,2);out.write("data",4);word(size,4);out.write(reinterpret_cast<const char*>(pcm[c].data()),size);if(!out)throw ParseError("cannot write cinema PCM wave");
       }
       std::cout << "Decoded " << count << " frame(s); progressive frames; fps=rate_word/100, duration_ms=duration_ticks*10; interlaced unsupported\n";
+    }
+    else if(mode=="stage") {
+      const auto setup=parse_stage(text);std::cout<<setup.backgrounds.size()<<" backgrounds, "<<setup.access.size()<<" hotspots, "<<setup.layers.size()<<" layers, "<<setup.dialogues.size()<<" voice bindings\n";
+    }
+    else if(mode=="stage-art") {
+      if(argc!=5 || std::filesystem::exists(argv[4]))throw ParseError("stage-art ARCHIVE BASENAME NEW_OUTPUT.pam");
+      const auto image=StageArt(data).image(argv[3]);std::ofstream out(argv[4],std::ios::binary);
+      out<<"P7\nWIDTH "<<image.width<<"\nHEIGHT "<<image.height<<"\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n";
+      out.write(reinterpret_cast<const char*>(image.rgba.data()),static_cast<std::streamsize>(image.rgba.size()));if(!out)throw ParseError("cannot write stage art");
+    }
+    else if(mode=="extract-a01-stage") {
+      const auto model=write_stage(extract_a01_stage(b));
+      if(argc!=4 || std::filesystem::exists(argv[3]))throw ParseError("stage extraction requires a new output file");
+      std::ofstream out(argv[3]);out<<model;if(!out)throw ParseError("cannot write stage model");
+      std::cout<<"Original A01 puzzle layouts, layers and voice bindings extracted\n";
     }
     else if (mode=="extract-a01-navigation") {
       if (argc!=4) throw ParseError("navigation extraction requires a new output directory");

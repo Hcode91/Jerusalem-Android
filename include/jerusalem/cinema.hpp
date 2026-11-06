@@ -9,6 +9,7 @@ struct CinemaEvent { enum Kind {Codebook,Audio,Frame,Dropped} kind; std::uint32_
 // Sequential, bounded progressive CNM decoder. DLL timing: fps=rate_word/100; duration_ms=duration_ticks*10.
 class CinemaDecoder {
   std::vector<std::uint8_t> bytes_,surface_;
+  std::vector<std::uint8_t> coverage_;
   CinemaInfo info_{};
   std::size_t position_=0,frame_count_=0;
   std::uint64_t decoded_pixels_=0;
@@ -22,6 +23,8 @@ class CinemaDecoder {
   bool done() const {return position_==bytes_.size();}
   CinemaEvent next();
   Bitmap image() const;
+  // Alpha describes vectors actually written, not a guessed black colour key.
+  Bitmap sprite() const;
   const std::vector<std::uint8_t>& dib() const {return surface_;}
 };
 }

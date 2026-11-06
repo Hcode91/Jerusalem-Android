@@ -2,7 +2,7 @@
 
 ## Scope and evidence rules
 
-This pass uses static analysis only: bounded file reads, PE import/section parsing, SHA-256, `objdump -p/-h/-d -Mintel`, printable-string offsets, and x86 call-site tracing. Original Windows code is neither executed nor shipped. Addresses below are preferred virtual addresses in the supplied executable; use the hash to identify the build. A PE timestamp is an embedded header value, not proof of a release date.
+This pass uses static analysis only: bounded file reads, PE import/section parsing, SHA-256, `objdump -p/-h/-d -Mintel`, printable-string offsets, and x86 call-site tracing. Original Windows code is never shipped. Later milestones optionally execute bounded decoder, registration and selected handler instructions in isolated reference harnesses with engine/Windows calls stubbed; these tools are separate from the native runtime. Addresses below are preferred virtual addresses in the supplied executable; use the hash to identify the build. A PE timestamp is an embedded header value, not proof of a release date.
 
 **Verified** means directly observed bytes or a described instruction sequence. **Inference** means an interpretation supported by those observations. **Unknown** means no decoder or runtime semantics have been established. A 4096-byte prefix is never passed off as a complete original asset.
 
@@ -206,3 +206,12 @@ The user confirmed the three supported A01 pickups and inventory. [Milestone 10]
 [Milestone 12](a01-story-cinema-milestone-12.md) adds the palm assignment pickup and conditional presentations, consuming matting offer, selected-item target handling, and a verified original spoken response with integer-millisecond DIA subtitles. Original bounded dispatch comparisons match 512 state cases and six response/event cases. V5 models and checkpoint revision 3 retain these effects while validating legacy migration.
 
 The user supplied additional Cinema research. Independent DLL tracing corrected the sound channel encoding (byte 0 plus one), FPS scale (0x0c/100) and duration scale (0x24*10 ms). A new portable C++ decoder handles progressive CNM T/U/S/X and PCM Z/A/B chunks, destination preservation, persistent candidates and bounded allocator padding. All 1090 still checksums match; all 367 frames across three original movies compare byte-for-byte. D=2 also matches a generated three-frame original-routine comparison. The exact format, sample hashes, limitations and reproducible tools are documented in milestone 12. Interlaced decoding, alternative timing modes, all-disc movie coverage and story completion callbacks remain unsupported.
+
+
+## Milestone 13: A01 story and flat puzzle scenes
+
+The [A01 story ledger](a01-story-milestone-13.md) documents the new opening/first-escape controller, its exact original routine references, testing and remaining blockers. The stage extractor recovers 25 backgrounds, 33 ordered accesses, 83 layer bindings and 42 voice bindings into an independent bounded TSV. An isolated setup capture matches all 141 visual/access records from 296 original calls; eight selected palm/projectile/wrong-target handler cases match the implemented media requests.
+
+Connection APIs `0042bf70` and `0042bf90` enable and disable inclusive index ranges, respectively; their last two arguments are not cursor/event values. Object flag 8 is a world use-source selection, not a bag pickup. Cinema BMP sprites now expose a written-vector coverage mask so index-0 holes preserve the background and written black pixels remain visible. TGA-named CNM entries have meaningful fourth-byte values; their alpha composition remains unverified and the stage loader rejects them explicitly.
+
+The implemented story stops before the next topic-selection puzzle, which needs the general conversation UI and TGA alpha path. Story checkpoints, lip-sync, all animation callbacks and the remaining A01 area ending are not implemented. Existing preview checkpoint semantics are unchanged. Original binaries/data and captured/decompiled research remain private and excluded from commits.

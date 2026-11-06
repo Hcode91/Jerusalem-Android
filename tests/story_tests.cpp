@@ -85,6 +85,12 @@ int main(int argc,char** argv){try{
   const std::vector<unsigned> expected=overshoot?std::vector<unsigned>(9,1):std::vector<unsigned>({1,1,1,1,1,1,1,1,2,2,2,2,1,1,3,3});
   for(std::size_t k=0;k<expected.size();++k)check(decoder.dib()[k*16]==expected[k]*10);
  }
+ // Coverage distinguishes an untouched vector from a genuinely written black pixel.
+ auto untouched=cinema();BitWriter zero_indices;zero_indices.put(0,1);for(unsigned i=0;i<8;++i){zero_indices.put(0,3);zero_indices.put(0,1);}zero_indices.put(1,1);
+ std::copy(zero_indices.bytes.begin(),zero_indices.bytes.end(),untouched.begin()+248);CinemaDecoder empty_sprite(untouched);empty_sprite.next();const auto holes=empty_sprite.sprite();
+ for(std::size_t i=3;i<holes.rgba.size();i+=4)check(holes.rgba[i]==0);
+ auto black=cinema();const auto black_book=248+Bytes(black).u32(205);std::fill(black.begin()+black_book,black.end(),0);CinemaDecoder black_sprite(black);black_sprite.next();const auto opaque=black_sprite.sprite();
+ for(std::size_t i=0;i<opaque.rgba.size();i+=4)check(opaque.rgba[i]==0 && opaque.rgba[i+1]==0 && opaque.rgba[i+2]==0 && opaque.rgba[i+3]==255);
  // A reused index-0 frame must preserve the previous destination, then X must do so too.
  auto sequence=cinema();word(sequence,28,3);sequence.insert(sequence.begin()+200,16,0);
  const auto before=sequence.size();sequence.push_back('S');sequence.resize(before+1+47);word(sequence,before+1,5);word(sequence,before+5,5);word(sequence,before+9,1,2);word(sequence,before+11,4,2);word(sequence,before+13,32);word(sequence,before+17,2);

@@ -245,6 +245,38 @@ def synthetic_cinema(frames=3, preload_audio=False):
     return bytes(result)
 
 
+def synthetic_stage_fixture(bitmap, pcm_wave):
+    """Original-free fixtures exercise story callbacks; never represent game playback."""
+    ids = (10999, 10000, 10001, 10002, 11000, 11002, 11004, 11005, 11008,
+           11011, 11012, 11013, 11014, 11015, 11016, 11017)
+    stage = 'JERUSALEM_A01_STAGE_V1\n'
+    for scene in (10045, 10016, 10017, 10018, 10039):
+        stage += f'background {scene} SYNTH.BMP 0 16\n'
+    for voice in ids:
+        stage += f'dialogue {voice} A01 SYNTH_VOICE_{voice}\n'
+    model = 'JERUSALEM_A01_NAV_V3\n'
+    files = {'a01-stage.tsv': stage.encode()}
+    for node in range(1, 7):
+        model += f'node {1010100+node} STORY_NODE_{node} 4\n'
+        files[f'STORY_NODE_{node}.aqc'] = synthetic_story_aqc()
+        if node < 6:
+            model += f'exit {1010100+node} 0 {1010101+node} 0 1 0 -750 3600 750 53 0 0 0 85\n'
+    model += ('exit 1010106 0 1010105 0 0 0 -750 3600 750 53 0 0 0 85\n'
+              'exit 1010106 1 10039 1 1 0 -750 3600 750 53 0 0 0 85\n')
+    files['a01-navigation.tsv'] = model.encode()
+    # AT3 directory wraps an independently generated BMP, including both archive fallbacks.
+    name = b'\\bgr\\SYNTH.BMP'
+    entry = name+bytes(243-len(name))+struct.pack('<III', 32+255, len(bitmap), len(bitmap))
+    archive = b'ATIII'+bytes(3)+struct.pack('<III', 255, 1, 255)+bytes(12)+entry+bitmap
+    files['data/A01.AT3'] = files['data/SY.AT3'] = archive
+    for voice in ids:
+        files[f'data/a01/sound/eng/SYNTH_VOICE_{voice}.WAC'] = pcm_wave
+        files[f'data/a01/dia/eng/SYNTH_VOICE_{voice}.DIA'] = b'0 Synthetic story speech\r\n400 END\r\n'
+    for movie in ('001', '002', '003', '004', '006', '007A', '007B', '007C', '009'):
+        files[f'data/a01/pla/eng/A01S01_AN{movie}.CI2'] = synthetic_cinema(3, preload_audio=True)
+    return files
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Android runtime smoke tests run only in GitHub Actions')
@@ -551,7 +583,34 @@ def main():
         wait_for(lambda: b'Audio buffer drained: synthetic-preloaded.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Preloaded soundtrack did not reach SDL output')
         if b'Cinema preview stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
             raise RuntimeError('Cinema emitted an error while playing the preloaded soundtrack fixture')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        # New story mode: actual movie/sound EOF callbacks, puzzle screens and first encounter.
+        for name, content in synthetic_stage_fixture(bytes(bitmap), audio.getvalue()).items():
+            parent = str(Path(name).parent)
+            adb('shell', f'run-as {PACKAGE} mkdir -p files/game-data/{parent}')
+            adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=content)
+        adb('logcat', '-c')
+        click_scrolling('Start A01 story')
+        wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Opening movie / black puzzle / speech / second movie did not enter node 1')
+        for node in range(2, 7):
+            adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+            wait_for(lambda: f'A01 story cue: kind=0 id={1010100+node}'.encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                     f'Story navigation did not reach node {node}')
+        wait_for(lambda: b'A01 story cue: kind=3 id=10002' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'First encounter did not chain all three dialogue callbacks')
+        wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'A01 story cue: kind=0 id=1010106') >= 2,
+                 'First encounter did not return to node 6 after speech finished')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'A01 story cue: kind=1 id=10039' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Native puzzle exit did not invoke the warning scene')
+        wait_for(lambda: b'A01 story cue: kind=3 id=11005' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Puzzle speech did not complete into the second speaker')
+        wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'A01 story cue: kind=0 id=1010105') >= 2,
+                 'Puzzle speech did not return to the original arrival node')
+        if b'A01 story stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
+            raise RuntimeError('Story emitted a decoder, layout or playback error')
+        (OUTPUT / 'synthetic-story-callbacks.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, story opening / encounter / puzzle callbacks using synthetic assets, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

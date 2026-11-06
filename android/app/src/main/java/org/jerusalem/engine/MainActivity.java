@@ -69,6 +69,7 @@ public class MainActivity extends SDLActivity {
     private static native void nativeSelectItem(int item);
     private static native String nativeSubtitle();
     private static native byte[] nativeExtractA01(byte[] program);
+    private static native byte[] nativeExtractStage(byte[] program);
 
     @Override protected String[] getLibraries() { return new String[] {"SDL3", "main"}; }
 
@@ -115,6 +116,7 @@ public class MainActivity extends SDLActivity {
         navigation.setOnLongClickListener(v -> { if (!importing) chooseNavigationSource(); return true; });
         buttons.addView(navigation);
         buttons.addView(button("Inventory", v -> showInventory()));
+        buttons.addView(button("Start A01 story", v -> { if (!importing) nativeCommand(11); }));
         buttons.addView(button("Save checkpoint", v -> { if (!importing) nativeCommand(9); }));
         buttons.addView(button("Load checkpoint", v -> { if (!importing) nativeCommand(10); }));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
@@ -323,14 +325,20 @@ public class MainActivity extends SDLActivity {
                         bytes.write(buffer, 0, read);
                     }
                 }
-                byte[] model = nativeExtractA01(bytes.toByteArray());
+                byte[] program = bytes.toByteArray();
+                byte[] stage = nativeExtractStage(program);
+                byte[] model = nativeExtractA01(program);
                 if (model == null) throw new IOException("Native scene extraction returned no model");
                 temporary = File.createTempFile("navigation-", ".part", dataRoot);
                 try (FileOutputStream output = new FileOutputStream(temporary)) {
                     output.write(model); output.getFD().sync();
                 }
                 if (!temporary.renameTo(new File(dataRoot, "a01-navigation.tsv"))) throw new IOException("Cannot save scene connections");
-                success = true; message = "Original A01 connections are ready.";
+                if (stage == null) throw new IOException("Native story extraction returned no model");
+                temporary = File.createTempFile("stage-", ".part", dataRoot);
+                try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(stage); output.getFD().sync(); }
+                if (!temporary.renameTo(new File(dataRoot, "a01-stage.tsv"))) throw new IOException("Cannot save story layouts");
+                success = true; message = "Original A01 connections and story layouts are ready.";
             } catch (Exception error) { message = "A01 extraction failed: " + error.getMessage(); }
             finally { if (temporary != null && temporary.exists() && !temporary.delete())
                 android.util.Log.w("Jerusalem", "Cannot remove partial navigation import"); }
