@@ -23,7 +23,8 @@ std::int32_t Bytes::i32(std::size_t p) const {
       static_cast<std::int32_t>(static_cast<std::int64_t>(n) - 0x100000000LL);
 }
 bool Bytes::is(std::size_t p, const std::string& s) const {
-  return p <= size_ && s.size() <= size_ - p && (s.empty() || std::equal(s.begin(), s.end(), data_ + p));
+  return p <= size_ && s.size() <= size_ - p && (s.empty() || std::equal(s.begin(), s.end(), data_ + p,
+      [](char a,std::uint8_t b){return static_cast<std::uint8_t>(a)==b;}));
 }
 Bytes Bytes::slice(std::size_t p, std::size_t n) const { require(p,n); return Bytes(p ? data_ + p : data_,n); }
 std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {

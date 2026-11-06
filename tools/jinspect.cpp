@@ -1,6 +1,7 @@
 #include "jerusalem/resources.hpp"
 #include "jerusalem/panorama.hpp"
 #include "jerusalem/aqc_animation.hpp"
+#include "jerusalem/navigation.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -8,7 +9,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3 FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -16,6 +17,15 @@ int main(int argc,char** argv) {
     const std::string mode=argv[1], text(data.begin(),data.end());
     if (mode=="inspect") std::cout << inspect(b) << '\n';
     else if (mode=="describe") std::cout << describe_resource(b,std::filesystem::path(argv[2]).filename().string()).details << '\n';
+    else if (mode=="extract-a01-navigation") {
+      if (argc!=4) throw ParseError("navigation extraction requires a new output directory");
+      const auto graph=extract_a01_navigation(b);
+      const std::filesystem::path root=argv[3];
+      if (!std::filesystem::create_directory(root)) throw ParseError("output directory must not already exist");
+      std::ofstream out(root/"a01-navigation.tsv"); out << write_navigation(graph);
+      if (!out) throw ParseError("cannot write native navigation model");
+      std::cout << graph.nodes.size() << " nodes, " << graph.exits.size() << " exits extracted without executing the program\n";
+    }
     else if (mode=="map-panorama") {
       if (argc!=10) throw ParseError("map-panorama FILE YAW PITCH FOV WIDTH HEIGHT COLUMNS ROWS");
       const auto geometry=panorama_geometry(b);

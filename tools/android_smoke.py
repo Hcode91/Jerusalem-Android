@@ -251,7 +251,29 @@ def main():
         click_scrolling('Preview animation')
         wait_for(lambda: b'Animation preview off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Animation preview did not switch off')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        # Add traversal fixtures after browser checks so earlier file lists remain stable.
+        # These records and images are synthetic; no original executable is used in CI.
+        for name in ('SYNTH_A', 'SYNTH_B'):
+            adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}.aqc'", input=synthetic_animated_aqc())
+        model = ('JERUSALEM_A01_NAV_V1\nnode 1 SYNTH_A 2\nnode 2 SYNTH_B 2\n'
+                 'exit 1 0 2 0 1 0 -750 3600 750 53 0 0 0 85\n'
+                 'exit 2 0 1 0 0 0 -750 3600 750 53 0 0 0 85\n'
+                 'exit 2 1 99 1 1 0 -750 3600 750 53 0 0 0 85\n')
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=model.encode())
+        click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal: SYNTH_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Traversal mode did not load the initial synthetic scene')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'A01 traversal: SYNTH_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Tapping an enabled exit did not change scene')
+        adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
+        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Disabled return route or puzzle boundary was not respected')
+        (OUTPUT / 'a01-traversal-synthetic.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Traversal preview did not switch off')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

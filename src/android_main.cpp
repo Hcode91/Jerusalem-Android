@@ -1,6 +1,7 @@
 #include "jerusalem/resources.hpp"
 #include "jerusalem/panorama.hpp"
 #include "jerusalem/aqc_animation.hpp"
+#include "jerusalem/navigation.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -10,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <utility>
 
@@ -109,6 +111,7 @@ class Renderer {
   std::optional<jerusalem::Camera> saved_camera_;
   bool saved_camera_mode_=false;
   Uint64 animation_tick_=0;
+  std::vector<jerusalem::Exit> exits_;
   int width_=0,height_=0;
   float zoom_=1,pan_x_=0,pan_y_=0;
   std::string preview_;
@@ -125,6 +128,7 @@ class Renderer {
     if (camera_texture_) SDL_DestroyTexture(camera_texture_);
     texture_=camera_texture_=nullptr; panorama_={}; camera_mode_=false;
     animation_.reset(); animation_error_.clear(); saved_camera_.reset();
+    exits_.clear();
     camera_width_=camera_height_=0;
   }
   void fit() { zoom_=1; pan_x_=pan_y_=0; camera_={}; camera_dirty_=true; }
@@ -148,6 +152,16 @@ class Renderer {
     animation_tick_=SDL_GetTicks();
   }
   void reset_animation_clock() { animation_tick_=SDL_GetTicks(); }
+  jerusalem::Camera camera() const { return camera_; }
+  void set_camera(jerusalem::Camera camera) { camera_=camera; camera_dirty_=true; }
+  void exits(std::vector<jerusalem::Exit> exits) { exits_=std::move(exits); }
+  std::optional<jerusalem::HotspotPoint> hit(float x,float y) const {
+    int w=0,h=0; SDL_GetRenderOutputSize(renderer_,&w,&h);
+    if (!camera_mode_ || !camera_width_ || !camera_height_ || w<=0 || h<=220 || y*h<64 || y*h>=h-156) return std::nullopt;
+    const auto camera=jerusalem::constrain_camera(geometry_,camera_,camera_width_,camera_height_);
+    const auto point=jerusalem::panorama_point(geometry_,camera,2*x-1,2*(y*h-64)/(h-220)-1,camera_width_,camera_height_);
+    return jerusalem::hotspot_point(geometry_,point);
+  }
   void preview_animation() {
     if (!animation_) { report(animation_error_.empty() ? "Open a complete AQC before previewing animation." : animation_error_); return; }
     const bool was_active=animation_->channel().has_value();
@@ -217,6 +231,15 @@ class Renderer {
         }
         SDL_FRect dst{0,64,float(w),float(h-220)};
         SDL_RenderTexture(renderer_,camera_texture_,nullptr,&dst);
+        for (const auto& exit:exits_) if (exit.enabled) {
+          const auto point=jerusalem::hotspot_screen(geometry_,camera_,(exit.left+exit.right)/2.0,
+                                                    (exit.top+exit.bottom)/2.0,rw,rh);
+          if (!point) continue;
+          const float x=float((point->x+1)*w/2),y=64+float((point->y+1)*(h-220)/2);
+          SDL_SetRenderDrawColor(renderer_,exit.puzzle?240:90,exit.puzzle?160:230,100,255);
+          SDL_FRect mark{x-14,y-14,28,28}; SDL_RenderRect(renderer_,&mark);
+          SDL_RenderDebugText(renderer_,x+18,y-4,exit.puzzle?"PUZZLE":"EXIT");
+        }
       } else {
         const float scale=std::min(float(w)/float(width_),float(h-220)/float(height_))*zoom_;
         SDL_FRect dst{(float(w)-float(width_)*scale)/2+pan_x_*float(w),
@@ -245,12 +268,34 @@ class Renderer {
 class InspectionScene {
   Renderer& renderer_;
   Audio& audio_;
+  std::optional<jerusalem::SceneGraph> navigation_;
+  std::map<std::uint32_t,std::filesystem::path> assets_;
+  std::optional<std::uint32_t> node_;
+  std::string selected_asset_;
+  void enter(std::uint32_t id,jerusalem::Camera camera) {
+    const auto& node=jerusalem::scene_node(*navigation_,id);
+    const auto path=checked_path(assets_.at(id).string());
+    auto data=jerusalem::read_file(path); const jerusalem::Bytes bytes(data);
+    auto image=jerusalem::decode_aqc(bytes);
+    const auto geometry=jerusalem::panorama_geometry(bytes);
+    if (jerusalem::parse_aqc_channels(bytes).size()!=node.channels)
+      throw jerusalem::ParseError("scene channel count differs from original setup: "+node.asset);
+    audio_.stop(); renderer_.panorama(std::move(image),geometry);
+    renderer_.load_channels(std::move(data)); renderer_.set_camera(camera);
+    std::vector<jerusalem::Exit> exits;
+    for (const auto& exit:navigation_->exits) if (exit.source==id) exits.push_back(exit);
+    renderer_.exits(std::move(exits)); node_=id; selected_asset_=node.asset;
+    report("A01 traversal: "+node.asset+". Drag to look; tap EXIT markers. Puzzle/dialogue/story events are not implemented. A01 navigation exits this mode.");
+  }
  public:
   InspectionScene(Renderer& r,Audio& a):renderer_(r),audio_(a) {}
   void open(const std::string& requested) {
+    node_.reset(); navigation_.reset(); assets_.clear();
     audio_.stop(); renderer_.clear_image(); renderer_.preview("");
     try {
       const auto path=checked_path(requested);
+      selected_asset_=path.stem().string();
+      for (auto& c:selected_asset_) if (c>='a'&&c<='z') c=char(c-'a'+'A');
       auto data=jerusalem::read_file(path); jerusalem::Bytes b(data);
       const auto description=jerusalem::describe_resource(b,path.filename().string());
       if (description.kind==jerusalem::ResourceKind::Bitmap) renderer_.bitmap(jerusalem::decode_bitmap(b));
@@ -269,6 +314,38 @@ class InspectionScene {
       if (description.kind!=jerusalem::ResourceKind::Wave && description.kind!=jerusalem::ResourceKind::CompressedAudio)
         report(description.summary);
     } catch (const std::exception& e) { renderer_.preview(e.what()); report(std::string("Asset error: ")+e.what()); }
+  }
+  void toggle_navigation(bool reload=false) {
+    if (node_ && !reload) {
+      node_.reset(); navigation_.reset(); assets_.clear(); renderer_.exits({});
+      report("A01 traversal off. Asset inspection controls remain available."); return;
+    }
+    try {
+      const auto root=std::filesystem::path(SDL_GetAndroidInternalStoragePath())/"game-data";
+      const auto model=jerusalem::read_file(root/"a01-navigation.tsv");
+      auto graph=jerusalem::parse_navigation(std::string(model.begin(),model.end()));
+      auto assets=jerusalem::resolve_scene_assets(root,graph);
+      auto id=graph.nodes.front().id;
+      auto camera=jerusalem::Camera{};
+      for (const auto& n:graph.nodes) if (n.asset==selected_asset_) { id=n.id; camera=renderer_.camera(); }
+      navigation_=std::move(graph); assets_=std::move(assets);
+      enter(id,camera);
+    } catch (const std::exception& e) {
+      navigation_.reset(); assets_.clear(); node_.reset(); renderer_.exits({});
+      report(std::string("A01 traversal unavailable: ")+e.what());
+    }
+  }
+  void tap(float x,float y) {
+    if (!node_) return;
+    try {
+      const auto point=renderer_.hit(x,y);
+      if (!point) return;
+      const auto hit=jerusalem::navigation_hit(*navigation_,*node_,point->x,point->y);
+      if (!hit) { report("No enabled exit at this point. Look for EXIT or PUZZLE markers."); return; }
+      const auto exit=navigation_->exits[*hit];
+      if (exit.puzzle) { report("This hotspot opens an original puzzle. Puzzle interactions are not implemented; no route has been bypassed."); return; }
+      enter(exit.target,exit.arrival);
+    } catch (const std::exception& e) { report(std::string("Cannot enter scene: ")+e.what()); }
   }
 };
 } // namespace
@@ -291,6 +368,23 @@ Java_org_jerusalem_engine_MainActivity_nativeOpen(JNIEnv* env,jclass,jstring pat
   try { const auto text=from_java(env,path); std::lock_guard<std::mutex> guard(bridge_mutex); pending_path=text; }
   catch (const std::exception& e) { report(e.what()); }
 }
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeExtractA01(JNIEnv* env,jclass,jbyteArray input) {
+  try {
+    if (!input || env->GetArrayLength(input)>1024*1024) throw jerusalem::ParseError("select Jerusalem.ex_ or Jerusalem.exe, not the disc image");
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(env->GetArrayLength(input)));
+    env->GetByteArrayRegion(input,0,static_cast<jsize>(bytes.size()),reinterpret_cast<jbyte*>(bytes.data()));
+    if (env->ExceptionCheck()) return nullptr;
+    const auto model=jerusalem::write_navigation(jerusalem::extract_a01_navigation(jerusalem::Bytes(bytes)));
+    const auto result=env->NewByteArray(static_cast<jsize>(model.size()));
+    if (result) env->SetByteArrayRegion(result,0,static_cast<jsize>(model.size()),reinterpret_cast<const jbyte*>(model.data()));
+    return result;
+  } catch (const std::exception& e) {
+    const auto type=env->FindClass("java/lang/IllegalArgumentException");
+    if (type) env->ThrowNew(type,e.what());
+    return nullptr;
+  }
+}
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,jstring path) {
   try {
@@ -304,7 +398,7 @@ Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,js
 }
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeCommand(JNIEnv*,jclass,jint command) {
-  if (command<1 || command>6) return;
+  if (command<1 || command>8) return;
   std::lock_guard<std::mutex> guard(bridge_mutex); commands|=1U<<command;
 }
 extern "C" JNIEXPORT jstring JNICALL
@@ -326,13 +420,31 @@ int main(int,char**) {
            std::string("Ready without audio: ")+SDL_GetError());
     InspectionScene scene(renderer,audio);
     bool running=true,background=false,dragging=false;
+    float touch_x=0,touch_y=0; bool touch_moved=false;
+    std::set<SDL_FingerID> touches;
+    SDL_FingerID active_touch=0;
     while (running) {
       SDL_Event event;
       while (SDL_PollEvent(&event)) {
         if (event.type==SDL_EVENT_QUIT) running=false;
-        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; audio.pause(true); renderer.reset_animation_clock(); }
+        else if (event.type==SDL_EVENT_WILL_ENTER_BACKGROUND) { background=true; dragging=false; touches.clear(); touch_moved=true; audio.pause(true); renderer.reset_animation_clock(); }
         else if (event.type==SDL_EVENT_DID_ENTER_FOREGROUND) { background=false; audio.pause(false); renderer.reset_animation_clock(); }
-        else if (event.type==SDL_EVENT_FINGER_MOTION) renderer.pan(event.tfinger.dx,event.tfinger.dy);
+        else if (event.type==SDL_EVENT_FINGER_DOWN) {
+          if (touches.empty()) { active_touch=event.tfinger.fingerID; touch_x=event.tfinger.x; touch_y=event.tfinger.y; touch_moved=false; }
+          else touch_moved=true;
+          touches.insert(event.tfinger.fingerID);
+        }
+        else if (event.type==SDL_EVENT_FINGER_MOTION) {
+          if (touches.size()==1 && event.tfinger.fingerID==active_touch) {
+            if (std::abs(event.tfinger.x-touch_x)+std::abs(event.tfinger.y-touch_y)>0.015f) touch_moved=true;
+            renderer.pan(event.tfinger.dx,event.tfinger.dy);
+          }
+        }
+        else if (event.type==SDL_EVENT_FINGER_UP) {
+          if (touches.count(event.tfinger.fingerID) && touches.size()==1 && event.tfinger.fingerID==active_touch && !touch_moved)
+            scene.tap(event.tfinger.x,event.tfinger.y);
+          touches.erase(event.tfinger.fingerID);
+        }
         else if (event.type==SDL_EVENT_MOUSE_BUTTON_DOWN) dragging=true;
         else if (event.type==SDL_EVENT_MOUSE_BUTTON_UP) dragging=false;
         else if (event.type==SDL_EVENT_MOUSE_MOTION && dragging) renderer.pan(event.motion.xrel/1280,event.motion.yrel/720);
@@ -351,6 +463,8 @@ int main(int,char**) {
       if (action&(1U<<4)) { audio.stop(); report("Audio stopped."); }
       if (action&(1U<<5)) renderer.toggle_camera();
       if (action&(1U<<6)) renderer.preview_animation();
+      if (action&(1U<<7)) scene.toggle_navigation();
+      if (action&(1U<<8)) scene.toggle_navigation(true);
       if (!background) audio.update();
       if (!background) {
         try { renderer.draw(message); }

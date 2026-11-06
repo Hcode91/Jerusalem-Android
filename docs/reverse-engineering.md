@@ -122,7 +122,7 @@ The sample's first record has offset **82907** (`32 + 82875`), stored length **7
 
 **Updated verification:** Ghidra tracing established image dimensions, source bytes per pixel, the two compressed streams, codebook expansion and RGB565 colours. All 19 Disc 1 static images now decode and match original index/codebook routines. The spherical projection and angular fields are now verified in milestone 5. See [milestone 4](aqc-milestone-4.md) for exact offsets, bounds and validation.
 
-Executable strings at VA `0x4ab940` onward identify `aSecComAqi::DecompressNode` and `DecompressChannel`. Format strings reference `%s.aqc` and numbered AQC filenames. Diagnostics also identify rotations, puzzles, animation images, hotspots, and accessibility. These suggest relationships between views, transitions, and interactions. Actual node graph layout, hotspot coordinates/hit testing and script effects have not been traced. The projection is now established in milestone 5. The Android scene manager currently has only an inspection scene; there is no invented game navigation.
+Executable strings at VA `0x4ab940` onward identify `aSecComAqi::DecompressNode` and `DecompressChannel`. Format strings reference `%s.aqc` and numbered AQC filenames. Diagnostics also identify rotations, puzzles, animation images, hotspots, and accessibility. These suggest relationships between views, transitions, and interactions. A01 registrations, angular hotspot hit tests and arrival cameras are now established in milestone 7; broader script effects remain unresolved. The projection is now established in milestone 5. Android now offers an explicitly limited A01 traversal preview derived from those original registrations.
 
 ## 7. Dialogue and DAN
 
@@ -174,3 +174,7 @@ Architecture references used for the independent app: [SDL Android integration](
 ## Original AQC channel frames and inspection preview
 
 [Milestone 6](aqc-animation-milestone-6.md) implements bounded channel/frame parsing and native/Python patch decoding. All 639 frames across 79 channels in 18 nodes match original decoder indices and have identical native/Python pixels. A09S02N06R01 remains unsupported for channels. Android and SDL2 provide explicit single-channel inspection preview; game-driven activation, original timing, navigation and interactions remain future work. The user has confirmed the preceding 360 camera on Android.
+
+## Original A01 graph and angular interactions
+
+[Milestone 7](a01-navigation-milestone-7.md) documents the initializer, node/exit registration APIs, angular coordinate conversion, hit bounds, enabled states and arrival cameras. A bounded static extractor matches 91 isolated original call captures, producing six nodes, 16 rotation links and one puzzle action. Android and SDL2 consume a user-derived native model; the disabled node-6 return stays disabled and the puzzle reports its implementation boundary. Story callbacks, original activation/timing and full gameplay remain unimplemented. The user has now confirmed animation inspection as well as audio/static-image/360-camera operation on Android.

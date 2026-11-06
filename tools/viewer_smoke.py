@@ -26,6 +26,17 @@ def main():
             raise RuntimeError(f'SDL2 animation preview failed: {result.stdout}\n{result.stderr}')
         print('PASS: native animated patch composition and timed preview advancement')
 
+        for name in ('SYNTH_A', 'SYNTH_B'):
+            (Path(directory) / (name + '.aqc')).write_bytes(synthetic_animated_aqc())
+        model = Path(directory) / 'a01-navigation.tsv'
+        model.write_text('JERUSALEM_A01_NAV_V1\nnode 1 SYNTH_A 2\nnode 2 SYNTH_B 2\nexit 1 0 2 0 1 0 -750 3600 750 53 0 0 0 85\n')
+        result = subprocess.run([sys.argv[1], str(Path(directory) / 'SYNTH_A.aqc'),
+                                 '--navigation', str(model), '--frames', '2'], env=env,
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode or 'SDL2 panorama viewer completed' not in result.stdout:
+            raise RuntimeError(f'SDL2 navigation launch failed: {result.stdout}\n{result.stderr}')
+        print('PASS: traversal model loading and asset resolution with synthetic data')
+
 
 if __name__ == '__main__':
     main()

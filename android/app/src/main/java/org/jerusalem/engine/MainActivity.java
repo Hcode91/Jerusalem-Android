@@ -16,6 +16,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import org.libsdl.app.SDLActivity;
 import java.io.File;
+import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,6 +32,7 @@ import java.util.concurrent.Executors;
 /** Android SAF import and accessible controls; decoding and playback live in C++. */
 public class MainActivity extends SDLActivity {
     private static final int PICK_TREE = 100;
+    private static final int PICK_NAVIGATION = 101;
     private static final long FILE_LIMIT = 64L * 1024 * 1024;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private TextView status;
@@ -58,6 +60,7 @@ public class MainActivity extends SDLActivity {
     private static native boolean nativeSupportsAudio(String path);
     private static native void nativeCommand(int command);
     private static native String nativeStatus();
+    private static native byte[] nativeExtractA01(byte[] program);
 
     @Override protected String[] getLibraries() { return new String[] {"SDL3", "main"}; }
 
@@ -91,6 +94,13 @@ public class MainActivity extends SDLActivity {
             else playWhenFocused(selectedAudioPath);
         }));
         buttons.addView(button("Preview animation", v -> nativeCommand(6)));
+        Button navigation = button("A01 navigation", v -> {
+            if (importing) return;
+            if (new File(dataRoot, "a01-navigation.tsv").isFile()) nativeCommand(7);
+            else chooseNavigationSource();
+        });
+        navigation.setOnLongClickListener(v -> { if (!importing) chooseNavigationSource(); return true; });
+        buttons.addView(navigation);
         buttons.addView(button("Fit image", v -> nativeCommand(1)));
         buttons.addView(button("Flat / 360", v -> nativeCommand(5)));
         buttons.addView(button("Zoom +", v -> nativeCommand(2)));
@@ -193,7 +203,9 @@ public class MainActivity extends SDLActivity {
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent result) {
         super.onActivityResult(requestCode, resultCode, result);
-        if (requestCode != PICK_TREE || resultCode != RESULT_OK || result == null || result.getData() == null) return;
+        if (resultCode != RESULT_OK || result == null || result.getData() == null) return;
+        if (requestCode == PICK_NAVIGATION) { importNavigation(result.getData()); return; }
+        if (requestCode != PICK_TREE) return;
         Uri tree = result.getData();
         importing = true;
         importButton.setEnabled(false); browseButton.setEnabled(false); status.setText("Importing original data…");
@@ -209,6 +221,56 @@ public class MainActivity extends SDLActivity {
             runOnUiThread(() -> { if (!isDestroyed()) {
                 importing = false;
                 status.setText(finalMessage); importButton.setEnabled(true); browseButton.setEnabled(true);
+            }});
+        });
+    }
+
+    private void chooseNavigationSource() {
+        new AlertDialog.Builder(this).setTitle("A01 scene connections")
+                .setMessage("Choose Jerusalem.ex_ or Jerusalem.exe from your original disc. The app reads its A01 scene connections without running or retaining the Windows program.")
+                .setPositiveButton("Choose file", (dialog, which) -> {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.setType("*/*"); intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    startActivityForResult(intent, PICK_NAVIGATION);
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void importNavigation(Uri source) {
+        importing = true; importButton.setEnabled(false); browseButton.setEnabled(false);
+        status.setText("Reading original A01 scene connections…");
+        worker.execute(() -> {
+            boolean success = false;
+            String message;
+            File temporary = null;
+            try {
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                try (InputStream input = getContentResolver().openInputStream(source)) {
+                    if (input == null) throw new IOException("Cannot open selected program");
+                    byte[] buffer = new byte[16384]; int read;
+                    while ((read = input.read(buffer)) != -1) {
+                        if (bytes.size() + read > 1024 * 1024)
+                            throw new IOException("Choose Jerusalem.ex_ or Jerusalem.exe, not a disc image");
+                        bytes.write(buffer, 0, read);
+                    }
+                }
+                byte[] model = nativeExtractA01(bytes.toByteArray());
+                if (model == null) throw new IOException("Native scene extraction returned no model");
+                temporary = File.createTempFile("navigation-", ".part", dataRoot);
+                try (FileOutputStream output = new FileOutputStream(temporary)) {
+                    output.write(model); output.getFD().sync();
+                }
+                if (!temporary.renameTo(new File(dataRoot, "a01-navigation.tsv"))) throw new IOException("Cannot save scene connections");
+                success = true; message = "Original A01 connections are ready.";
+            } catch (Exception error) { message = "A01 extraction failed: " + error.getMessage(); }
+            finally { if (temporary != null && temporary.exists() && !temporary.delete())
+                android.util.Log.w("Jerusalem", "Cannot remove partial navigation import"); }
+            final boolean ready = success;
+            final String resultMessage = message;
+            runOnUiThread(() -> { if (!isDestroyed()) {
+                importing = false; importButton.setEnabled(true); browseButton.setEnabled(true);
+                status.setText(resultMessage);
+                if (ready) nativeCommand(8);
+                else showText("A01 navigation", resultMessage);
             }});
         });
     }

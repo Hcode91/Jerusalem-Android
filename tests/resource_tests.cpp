@@ -33,6 +33,9 @@ static std::vector<std::uint8_t> art() {
 }
 int main() {
   try {
+    const std::vector<std::uint8_t> binary_magic{0xff,0x8b,0};
+    check(Bytes(binary_magic).is(0,std::string("\xff\x8b\0",3)));
+    check(!Bytes(binary_magic).is(0,std::string("\xff\x8c\0",3)));
     auto w=wave(); auto info=parse_wave(Bytes(w)); check(info.rate==22050 && info.data_size==4);
     auto stereo=w; put(stereo,22,2,2); put(stereo,28,88200); put(stereo,32,4,2);
     info=parse_wave(Bytes(stereo)); check(info.channels==2 && info.rate==22050 && info.bits==16 && info.data_size==4);
