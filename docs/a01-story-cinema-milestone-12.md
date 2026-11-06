@@ -122,3 +122,7 @@ After installing the new APK:
 4. Browse/open **A01S01_AN004.CI2** or **A01S01_AN007C.CI2** under `a01/pla/eng`; check motion, stereo sound, Replay movie, Stop audio and background/resume.
 
 The next substantial engine work is connecting puzzle-screen backgrounds/hotspots, movie completion handlers and dialogue chains into an original sequence. A working decoder alone does not establish those gameplay transitions, and the native preview does not bypass them.
+
+## First combined Android run and browser-test correction
+
+Actions run [42276947585](https://github.com/Hcode91/Jerusalem-Android/actions/runs/42276947585) passed host tests, APK compilation/lint and ARM64 packaging. Its emulator test completed the new story pickup/use, checkpoint restoration and subtitle advancement before failing to select the movie fixture. The captured UI shows a scrollable Imported assets ListView whose visible rows end at `synthetic-labels.ini`; `synthetic-movie.CI2` is below the fold. The harness now searches the vertical list in both directions using swipes inside its viewport. Regression tests cover offscreen selection, reverse search and bounded failure for a missing asset. Movie playback assertions remain enabled; the corrected emulator result and physical-phone checks are pending.

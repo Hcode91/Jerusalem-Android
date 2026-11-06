@@ -48,6 +48,32 @@ class SmokeHarnessTests(unittest.TestCase):
             self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '20', '125', '280', '125', '350'))
             self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '120', '125'))
 
+    def test_movie_below_browser_fold_is_scrolled_into_view(self):
+        before = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,572][320,620]'},
+                    {'class': 'android.widget.ListView', 'scrollable': 'true', 'bounds': '[16,94][304,568]'},
+                    {'text': 'synthetic-labels.ini', 'bounds': '[16,526][304,568]'})
+        after = ui({'text': 'synthetic-movie.CI2', 'enabled': 'true', 'bounds': '[16,142][304,190]'})
+        with patch.object(smoke, 'current_ui', side_effect=[before, after]), patch.object(smoke, 'adb') as adb:
+            smoke.click_list_item('synthetic-movie.CI2')
+            self.assertEqual(adb.call_args_list[0].args, ('shell', 'input', 'swipe', '160', '548', '160', '114', '350'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '160', '166'))
+
+    def test_asset_list_can_reverse_to_find_an_earlier_row(self):
+        edge = ui({'class': 'android.widget.ListView', 'scrollable': 'true', 'bounds': '[16,94][304,568]'})
+        found = ui({'text': 'Earlier.CI2', 'bounds': '[16,94][304,142]'})
+        with patch.object(smoke, 'current_ui', side_effect=[edge, edge, edge, found]), patch.object(smoke, 'adb') as adb:
+            smoke.click_list_item('Earlier.CI2')
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '160', '114', '160', '548', '350'))
+            self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '160', '118'))
+
+    def test_missing_asset_still_fails_after_bounded_list_search(self):
+        edge = ui({'class': 'android.widget.ListView', 'scrollable': 'true', 'bounds': '[16,94][304,568]'})
+        with patch.object(smoke, 'current_ui', return_value=edge) as snapshot, patch.object(smoke, 'adb') as adb:
+            with self.assertRaisesRegex(RuntimeError, 'Asset list item not found: missing.CI2'):
+                smoke.click_list_item('missing.CI2')
+            self.assertEqual(snapshot.call_count, 4)
+            self.assertEqual(adb.call_count, 2)
+
     def test_camera_state_evidence_ignores_other_diagnostics(self):
         logs = (b'Ready.\nPanorama frame: yaw=225.000 pitch=0.000 fov=85.000 size=480x640\n'
                 b'Other status\nPanorama frame: yaw=196.667 pitch=-1.500 fov=68.000 size=480x640\n')
