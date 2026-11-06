@@ -47,6 +47,13 @@ struct ArtDirectory {
 struct LocalizedEntry { std::string key, language, title, text; };
 struct DanTriple { std::uint32_t first, second, third; };
 struct Dan { std::vector<DanTriple> levels, intervals; std::uint32_t end; };
+enum class ResourceKind { Unsupported, Bitmap, Wave, Archive, LocalizedText, DialogueAnimation, Text };
+struct ResourceDescription {
+  ResourceKind kind;
+  std::string summary;
+  std::string details;
+};
+ResourceDescription describe_resource(Bytes bytes, const std::string& filename = {});
 ArtDirectory parse_at3(Bytes bytes, bool allow_prefix = false);
 std::vector<LocalizedEntry> parse_localized(const std::string& text);
 Dan parse_dan(const std::string& text);

@@ -6,13 +6,14 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect inspect|cue|ini|localized|dan|at3|extract-media|extract-at3 FILE [NEW_OUTPUT_DIRECTORY]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|at3|extract-media|extract-at3 FILE [NEW_OUTPUT_DIRECTORY]\n";
     return 2;
   }
   try {
     auto data=read_file(argv[2]); Bytes b(data);
     const std::string mode=argv[1], text(data.begin(),data.end());
     if (mode=="inspect") std::cout << inspect(b) << '\n';
+    else if (mode=="describe") std::cout << describe_resource(b,std::filesystem::path(argv[2]).filename().string()).details << '\n';
     else if (mode=="cue") std::cout << parse_cue(text).binary_name << "\tMODE1/2352\n";
     else if (mode=="ini") for (const auto& e:parse_ini(text))
       std::cout << e.line << '\t' << e.section << '\t' << e.key << '\t' << e.value << '\n';

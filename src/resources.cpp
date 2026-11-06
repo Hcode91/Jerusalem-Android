@@ -3,6 +3,7 @@
 #include <fstream>
 #include <limits>
 #include <sstream>
+#include <utility>
 
 namespace jerusalem {
 void Bytes::require(std::size_t p, std::size_t n) const {
@@ -257,5 +258,101 @@ std::string inspect(Bytes b) {
       out << ' ' << hex[b.u8(i)>>4] << hex[b.u8(i)&15];
   }
   return out.str();
+}
+
+ResourceDescription describe_resource(Bytes b, const std::string& filename) {
+  constexpr std::size_t display_limit=128*1024;
+  auto result=[&](ResourceKind kind,std::string summary,std::string details) {
+    if (details.size()>display_limit) { details.resize(display_limit); details+="\n[Display truncated]"; }
+    return ResourceDescription{kind,std::move(summary),std::move(details)};
+  };
+  if (b.is(0,"ATIII")) {
+    const auto directory=parse_at3(b,true);
+    const std::string summary="AT3 archive: "+std::to_string(directory.entries.size())+" / "+
+        std::to_string(directory.declared_count)+" resource names available.";
+    std::string details=summary+"\n";
+    if (!directory.directory_complete) details+="This file is a truncated directory prefix.\n";
+    details+="Stored images use a proprietary codec. They cannot be displayed yet.\n\nResources:\n";
+    for (const auto& entry:directory.entries) {
+      details+=entry.name;
+      if (!entry.payload_available) details+=" [payload missing from this file]";
+      details+='\n';
+      if (details.size()>display_limit) break;
+    }
+    return result(ResourceKind::Archive,summary,details);
+  }
+  if (b.is(0,"BM")) {
+    const auto image=decode_bitmap(b);
+    const auto summary="BMP: "+std::to_string(image.width)+" x "+std::to_string(image.height)+".";
+    return result(ResourceKind::Bitmap,summary,summary+"\nClose this report to view the image. Drag to pan or use Fit image / Zoom.");
+  }
+  if (b.is(0,"RIFF") && b.is(8,"WAVE")) {
+    const auto wave=parse_wave(b);
+    const auto summary="PCM WAVE: "+std::to_string(wave.channels)+" channel(s), "+
+        std::to_string(wave.rate)+" Hz, "+std::to_string(wave.bits)+" bit.";
+    std::ostringstream details;
+    details<<summary<<"\nDuration: "<<double(wave.data_size)/(wave.rate*wave.channels*(wave.bits/8))
+           <<" seconds.\nIn the Android app, opening this file starts playback. Use Stop audio to stop playback.";
+    return result(ResourceKind::Wave,summary,details.str());
+  }
+  if (b.is(0,std::string("CNM UNR\0",8)))
+    return result(ResourceKind::Unsupported,"Cinema graphics: decoder not implemented.",
+        "This is a Cinema/CNM graphics resource.\nThe image/frame decoder is not implemented yet, so this build cannot display it.\n"
+        "Some original resources have .bmp names but contain Cinema data. Renaming them does not convert their format.\n"
+        "This is a current engine limitation; the app cannot run game scenes yet.");
+
+  // Preserve original single-byte text. NUL/control-rich binary files are not text.
+  bool text_file=b.size()>0 && b.size()<=4*1024*1024;
+  for (std::size_t i=0;text_file && i<b.size();++i) {
+    const auto c=b.u8(i);
+    if ((c<32 && c!='\r' && c!='\n' && c!='\t') || c==127) text_file=false;
+  }
+  if (text_file) {
+    const std::string text(reinterpret_cast<const char*>(b.data()),b.size());
+    try {
+      const auto table=parse_localized(text);
+      const auto summary="Localization: "+std::to_string(table.size())+" language records. English labels shown below.";
+      std::string details=summary+"\n\n";
+      bool english=false;
+      for (const auto& entry:table) if (entry.language=="ENG") {
+        english=true; details+=entry.key+": "+entry.title;
+        if (!entry.text.empty()) details+="\n"+entry.text;
+        details+="\n\n";
+        if (details.size()>display_limit) break;
+      }
+      if (!english) {
+        details+="No English rows in this table. Available labels:\n";
+        for (const auto& entry:table) {
+          details+=entry.language+" / "+entry.key+": "+entry.title+" "+entry.text+"\n";
+          if (details.size()>display_limit) break;
+        }
+      }
+      return result(ResourceKind::LocalizedText,summary,details);
+    } catch (const ParseError&) {}
+    try {
+      const auto animation=parse_dan(text);
+      const auto summary="DAN dialogue animation: "+std::to_string(animation.levels.size())+" level records, "+
+          std::to_string(animation.intervals.size())+" intervals.";
+      std::string details=summary+"\nTiming units and animation meanings are not yet decoded.\n\nInterval records:\n";
+      for (const auto& interval:animation.intervals) {
+        details+=std::to_string(interval.first)+" .. "+std::to_string(interval.second)+" : "+std::to_string(interval.third)+"\n";
+        if (details.size()>display_limit) break;
+      }
+      return result(ResourceKind::DialogueAnimation,summary,details);
+    } catch (const ParseError&) {}
+    return result(ResourceKind::Text,"Text resource: original contents shown below; game semantics are not decoded.",text);
+  }
+  std::string lower=filename;
+  std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return c>='A'&&c<='Z'?char(c-'A'+'a'):char(c);});
+  auto ends=[&](const std::string& suffix){return lower.size()>=suffix.size() && lower.compare(lower.size()-suffix.size(),suffix.size(),suffix)==0;};
+  std::string family;
+  if (ends(".aqc") || lower.find("aqc_sample")!=std::string::npos) family="AQC panorama/image";
+  else if (ends(".wac") || ends(".was") || (b.is(8,"RIFF") && b.is(16,"WAVE"))) family="Compressed game audio";
+  else if (ends(".ci2")) family="CI2 animation";
+  else family="This binary resource";
+  const std::string summary=family+": decoder not implemented.";
+  return result(ResourceKind::Unsupported,summary,summary+"\n\nNo image, animation, or sound has been decoded from this file.\n"
+      "This build can inspect AT3 resource names and localization/DAN text, show standard uncompressed BMPs, and play standard PCM WAVs.\n"
+      "Original game scenes and puzzles are not available yet.");
 }
 }  // namespace jerusalem

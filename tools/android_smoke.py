@@ -41,10 +41,14 @@ def control_center(xml, label):
     return None
 
 
+def current_ui():
+    adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
+    return adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml')
+
+
 def click(text):
     def locate():
-        adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
-        center = control_center(adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml'), text)
+        center = control_center(current_ui(), text)
         if center is not None:
             adb('shell', 'input', 'tap', str(center[0]), str(center[1]))
             return True
@@ -88,13 +92,22 @@ def main():
         struct.pack_into('<IiiHH', bitmap, 14, 40, 2, 2, 1, 24)
         bitmap[54:] = bytes([255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0])
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic.bmp'", input=bytes(bitmap))
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-labels.ini'",
+            input=b'42\r\nENG #Synthetic label#\r\nFRA #Etiquette#\r\n')
         click('Browse assets')
         click('synthetic.bmp')
         click('Close')
         wait_for(lambda: b'BMP: 2 x 2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native BMP rendering path did not complete')
         adb('shell', 'pidof', PACKAGE)
         (OUTPUT / 'synthetic-image.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection and synthetic BMP display.\nARM64 hardware and original asset playback remain separate validation gates.\n')
+        click('Browse assets')
+        click('synthetic-labels.ini')
+        wait_for(lambda: b'Synthetic label' in current_ui(), 'Decoded localization text was not displayed')
+        click('Close')
+        wait_for(lambda: b'Localization:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Native view did not use the localization-aware summary')
+        (OUTPUT / 'text-labels.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP display and readable localization text.\nARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

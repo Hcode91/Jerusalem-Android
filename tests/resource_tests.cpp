@@ -61,6 +61,33 @@ int main() {
     rejects([] { parse_localized("key\nENG #missing separator"); });
     auto dan=parse_dan("1\n1 90000 2\n0 5 0\n6 10 1\n11 END\n");
     check(dan.levels.size()==1 && dan.intervals.size()==2 && dan.end==11);
+    // Both Android display paths must use decoded content, not the binary header fallback.
+    auto describe_text=[](const std::string& text,const std::string& name) {
+      return describe_resource(Bytes(reinterpret_cast<const std::uint8_t*>(text.data()),text.size()),name);
+    };
+    auto description=describe_text("42\nENG #Synthetic label#\n","aObj.ini");
+    check(description.kind==ResourceKind::LocalizedText && description.details.find("Synthetic label")!=std::string::npos);
+    check(description.summary.find("Header:")==std::string::npos && description.details.find("Header:")==std::string::npos);
+    description=describe_text("42\nFRA #Etiquette#\n","aObj.ini");
+    check(description.details.find("FRA / 42")!=std::string::npos);
+    description=describe_text("1\n1 90000 2\n0 5 0\n6 10 1\n11 END\n","clip.dan");
+    check(description.kind==ResourceKind::DialogueAnimation && description.details.find("6 .. 10")!=std::string::npos);
+    description=describe_text("[settings]\nvolume=10\n","setup.ini");
+    check(description.kind==ResourceKind::Text && description.details.find("volume=10")!=std::string::npos);
+    check(describe_resource(Bytes(w),"MENU1.WAV").kind==ResourceKind::Wave);
+    check(describe_resource(Bytes(image),"test.bmp").kind==ResourceKind::Bitmap);
+    description=describe_resource(Bytes(a),"test.at3");
+    check(description.kind==ResourceKind::Archive && description.details.find("synthetic.bmp")!=std::string::npos);
+    description=describe_resource(Bytes(a.data(),280),"at3_sample.bin");
+    check(description.details.find("truncated directory prefix")!=std::string::npos);
+    std::vector<std::uint8_t> cnm{'C','N','M',' ','U','N','R',0};
+    description=describe_resource(Bytes(cnm),"original.bmp");
+    check(description.kind==ResourceKind::Unsupported && description.summary.find("Cinema")!=std::string::npos);
+    std::vector<std::uint8_t> unsupported{0,1,2,3};
+    description=describe_resource(Bytes(unsupported),"aqc_sample.bin");
+    check(description.kind==ResourceKind::Unsupported && description.details.find("decoder not implemented")!=std::string::npos);
+    check(description.details.find("Header:")==std::string::npos);
+    rejects([&]{describe_resource(Bytes(w.data(),20),"broken.wav");});
     rejects([] { parse_dan("1\n1 2"); });
     rejects([] { parse_dan("0\n5 2 0\n6 END"); });
     rejects([] { parse_dan("0\n0 4 0\n4 5 1\n6 END"); });

@@ -26,6 +26,7 @@ cmake --build build-host --parallel 2
 ctest --test-dir build-host --output-on-failure
 build-host/jinspect at3 /path/to/a01.at3
 build-host/jinspect localized /path/to/aObj.ini
+build-host/jinspect describe /path/to/aObj.ini
 build-host/jinspect dan /path/to/clip.dan
 build-host/jinspect extract-at3 /path/to/a01.at3 /path/to/new-output-directory
 build-host/jinspect extract-media /path/to/resource /path/to/new-output-directory
