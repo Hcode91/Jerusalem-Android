@@ -76,6 +76,8 @@ def inspect(data, max_blocks=10000):
     if data[8:12] != b'RIFF' or data[16:24] != b'WAVEfmt ' or data[44:48] != b'data':
         raise FormatError('unsupported layout: expected a fixed 44-byte PCM WAVE header at offset 8')
     count, outer_size = struct.unpack_from('<II', data)
+    if outer_size > 64 * 1024 * 1024:
+        raise FormatError('64 MiB decoded output limit exceeded')
     if not 1 <= count <= max_blocks:
         raise FormatError(f'block count outside supported inspection range 1..{max_blocks}')
     fmt_size, tag, channels, rate, byte_rate, align, bits = struct.unpack_from('<IHHIIHH', data, 24)
@@ -85,10 +87,10 @@ def inspect(data, max_blocks=10000):
         raise FormatError('invalid WAVE rate or alignment')
     riff_total = integer(data, 12, 4) + 8
     pcm_size = integer(data, 48, 4)
-    if not pcm_size or pcm_size % align or riff_total != 44 + pcm_size:
+    if not pcm_size or pcm_size % align or riff_total < 44 + pcm_size:
         raise FormatError('inconsistent embedded RIFF/data lengths')
     if channels == 1:
-        if outer_size != 44 + count * 512 or not 0 <= outer_size - riff_total < 512:
+        if riff_total != 44 + pcm_size or outer_size != 44 + count * 512 or not 0 <= outer_size - riff_total < 512:
             raise FormatError('unsupported mono padded-length convention')
     elif outer_size != riff_total:
         raise FormatError('unsupported stereo output-length convention')
@@ -117,7 +119,8 @@ def inspect(data, max_blocks=10000):
                 channels=channels, sample_rate=rate, bits_per_sample=bits,
                 stored_file_size=len(data), block_count=count,
                 wrapper_output_size=outer_size, riff_total_size=riff_total,
-                pcm_data_size=pcm_size, decoded_padding=outer_size-riff_total,
+                pcm_data_size=pcm_size, decoded_padding=outer_size-44-pcm_size,
+                normalized_wave_size=44+pcm_size,
                 pcm_generated=False, blocks=blocks)
 
 

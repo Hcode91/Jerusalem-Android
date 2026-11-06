@@ -8,7 +8,7 @@ An independent C++17 / SDL3 Android engine reimplementation for **Jerusalem: The
 - Original aMes/aObj localization table parsing, preserving order, duplicate IDs, and original bytes.
 - DAN level and interval parsing for the observed text dialect, with explicit `END` termination.
 - PE32 static inspection: sections, named/ordinal imports, relevant strings, SHA-256 identity. It never executes Windows code.
-- Ghidra loader tracing and a WAC/WAS block/token inspector. See [the verified audio layout checkpoint](docs/wac-was-milestone-2.md); compressed audio is not converted to PCM or played yet.
+- Ghidra loader tracing, WAC/WAS block/token inspection and native/Python PCM conversion for the verified mono/stereo dialect. Outputs match the original decoder routines on fifteen complete assets. See [audio decoding and validation](docs/wac-was-milestone-3.md). Android playback is connected and awaits device verification.
 - Standard uncompressed 24/32-bit BMP decoding and integer PCM WAV inspection/playback. The WAV parser has processed all 30 standard WAV files on Disc 1, including an original menu sound. No original image has yet been decoded.
 - Streaming ISO9660 extraction from the supplied MODE1/2352 disc image, with checked extents and dual-endian fields.
 - CUE validation for the supplied single MODE1/2352 data-track layout; conventional key/value INI parsing as a separate, explicitly selected dialect.
@@ -33,6 +33,8 @@ build-host/jinspect extract-at3 /path/to/a01.at3 /path/to/new-output-directory
 build-host/jinspect extract-media /path/to/resource /path/to/new-output-directory
 python3 tools/pe_probe.py /path/to/Jerusalem.ex_
 python3 tools/wac_layout.py /path/to/sound.wac
+python3 tools/wac_decode.py /path/to/sound.wac /path/to/new-sound.wav
+build-host/jinspect decode-audio /path/to/sound.was /path/to/new-output-directory
 python3 tools/disc_extract.py list /path/to/disc1.bin
 python3 tools/disc_extract.py extract /path/to/disc1.bin DATA/A01.AT3 /path/to/new-a01.at3
 ```
@@ -45,17 +47,17 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-Host validation passed CMake/CTest, 761 C++ checks with private original-data checks enabled, 4000 deterministic malformed-input rounds, and fourteen Python regression tests. Complete original archives were extracted and 30 original WAVs parsed. [Actions run 42149071429](https://github.com/Hcode91/Jerusalem-Android/actions/runs/42149071429) successfully built the ARM64 APK, passed Android lint and packaging checks, and launched the x86_64 native engine to Ready. Its subsequent UI test failed because Android uppercased a button label. Control matching now uses stable accessibility descriptions and case-insensitive fallback, with regression coverage; that fix awaits the next Actions result. ARM64 hardware launch and original scene playback remain unverified.
+Current host validation passes CMake/CTest with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds and 29 Python regression tests. CTest also runs the synthetic audio cases through the native decoder. Fifteen original WAC/WAS outputs match original decoder instructions byte for byte after documented container normalization. Standard WAV playback has been confirmed on the user's device. New compressed-audio Android paths and synthetic emulator coverage await Actions/device results; APKs are built only in Actions. The app remains an asset inspector and cannot run original scenes yet.
 
 ## Roadmap
 
 1. Run the workflow in the intended GitHub repository, fix CI failures, and verify launch/import on an ARM64 device.
 2. Complete A01 and system AT3 archives have been extracted, and all 30 Disc 1 standard WAVs parse successfully. Verify original sound playback on device and reverse the Cinema image payloads.
 3. Reverse the AT3 payload compression and AQC image codec using loader call sites and complete examples; add byte-exact decoder regression checks before rendering scenes.
-4. Reverse Cinema/CI2 frame tables and WAC/WAS sound codecs; trace complete samples now extracted privately from Disc 1.
+4. Reverse Cinema/CI2 frame tables. Expand the verified WAC/WAS audio corpus and check native compressed-audio playback on device.
 5. Trace scene activation, node transitions, hotspots, object IDs, dialogue triggers, and puzzle logic. Build the corresponding runtime only from established semantics.
 6. Design versioned native saves after the game state model is understood. Original `.ars` saves are currently unsupported.
 
 ## Licence and data
 
-New project code is MIT licensed; SDL3 is separately licensed under zlib and its licence is packaged in the APK by CI. This project is not affiliated with the original creators. Game files remain user supplied and are not covered by this repository's licence. No CD authentication, DRM bypass, licence falsification, or original executable execution is implemented.
+New project code is MIT licensed; SDL3 is separately licensed under zlib and its licence is packaged in the APK by CI. This project is not affiliated with the original creators. Game files remain user supplied and are not covered by this repository's licence. No CD authentication, DRM bypass or licence falsification is implemented. The engine never executes original binaries. An optional private-data research tool uses isolated CPU emulation of two audio routines solely as a decoder reference; it is not included in the APK.

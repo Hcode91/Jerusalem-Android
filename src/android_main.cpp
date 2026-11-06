@@ -51,7 +51,13 @@ class Audio {
     }
   }
   void play(jerusalem::Bytes b,const std::string& name) {
-    stop(); const auto w=jerusalem::parse_wave(b);
+    stop();
+    std::vector<std::uint8_t> decoded;
+    if (b.is(8,"RIFF") && b.is(16,"WAVE")) {
+      decoded=jerusalem::decode_game_audio(b);
+      b=jerusalem::Bytes(decoded);
+    }
+    const auto w=jerusalem::parse_wave(b);
     if (!(SDL_WasInit(SDL_INIT_AUDIO)&SDL_INIT_AUDIO) && !SDL_InitSubSystem(SDL_INIT_AUDIO))
       throw jerusalem::ParseError(std::string("Audio initialization: ")+SDL_GetError());
     SDL_AudioSpec spec{};
@@ -155,9 +161,11 @@ class InspectionScene {
       auto data=jerusalem::read_file(path); jerusalem::Bytes b(data);
       const auto description=jerusalem::describe_resource(b,path.filename().string());
       if (description.kind==jerusalem::ResourceKind::Bitmap) renderer_.bitmap(jerusalem::decode_bitmap(b));
-      else if (description.kind==jerusalem::ResourceKind::Wave) audio_.play(b,path.filename().string());
+      else if (description.kind==jerusalem::ResourceKind::Wave || description.kind==jerusalem::ResourceKind::CompressedAudio)
+        audio_.play(b,path.filename().string());
       renderer_.preview(description.details);
-      if (description.kind!=jerusalem::ResourceKind::Wave) report(description.summary);
+      if (description.kind!=jerusalem::ResourceKind::Wave && description.kind!=jerusalem::ResourceKind::CompressedAudio)
+        report(description.summary);
     } catch (const std::exception& e) { renderer_.preview(e.what()); report(std::string("Asset error: ")+e.what()); }
   }
 };
@@ -186,7 +194,9 @@ Java_org_jerusalem_engine_MainActivity_nativeSupportsAudio(JNIEnv* env,jclass,js
   try {
     const auto file=checked_path(from_java(env,path));
     const auto data=jerusalem::read_file(file);
-    jerusalem::parse_wave(jerusalem::Bytes(data));
+    jerusalem::Bytes b(data);
+    if (b.is(8,"RIFF") && b.is(16,"WAVE")) jerusalem::parse_game_audio(b);
+    else jerusalem::parse_wave(b);
     return JNI_TRUE;
   } catch (const std::exception&) { return JNI_FALSE; }
 }

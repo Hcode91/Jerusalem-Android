@@ -296,6 +296,17 @@ ResourceDescription describe_resource(Bytes b, const std::string& filename) {
            <<"Use Play audio to start/replay or Stop audio to stop. Playback errors appear in the status area.";
     return result(ResourceKind::Wave,summary,details.str());
   }
+  if (b.is(8,"RIFF") && b.is(16,"WAVE")) {
+    const auto audio=parse_game_audio(b);
+    const auto summary=std::string(audio.channels==1 ? "WAC" : "WAS")+": "+
+        std::to_string(audio.channels)+" channel(s), "+std::to_string(audio.rate)+" Hz, 16 bit.";
+    std::ostringstream details;
+    details<<summary<<"\nBlocks: "<<audio.blocks.size()<<"\nDuration: "
+           <<double(audio.pcm_size)/(audio.rate*audio.channels*2)<<" seconds.\n"
+           <<"Native PCM decoding is available for this header dialect. Unsupported tokens are reported during playback.\n"
+           <<"Use Play audio to replay or Stop audio to stop.";
+    return result(ResourceKind::CompressedAudio,summary,details.str());
+  }
   if (b.is(0,std::string("CNM UNR\0",8)))
     return result(ResourceKind::Unsupported,"Cinema graphics: decoder not implemented.",
         "This is a Cinema/CNM graphics resource.\nThe image/frame decoder is not implemented yet, so this build cannot display it.\n"

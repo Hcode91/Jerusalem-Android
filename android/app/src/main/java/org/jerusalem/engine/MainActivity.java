@@ -87,7 +87,7 @@ public class MainActivity extends SDLActivity {
         browseButton = button("Browse assets", v -> browse(dataRoot));
         buttons.addView(importButton); buttons.addView(browseButton);
         buttons.addView(button("Play audio", v -> {
-            if (selectedAudioPath == null) showText("Audio", "Choose a supported PCM WAV from Browse assets first. Compressed WAC/WAS files are not supported yet.");
+            if (selectedAudioPath == null) showText("Audio", "Choose a supported PCM WAV, WAC or WAS from Browse assets first.");
             else playWhenFocused(selectedAudioPath);
         }));
         buttons.addView(button("Fit image", v -> nativeCommand(1)));

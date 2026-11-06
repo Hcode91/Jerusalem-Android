@@ -158,3 +158,7 @@ Executable diagnostics link object presentation, bag animation, accessibility, r
 Use the complete AT3/Cinema payloads now recovered from the disc to reverse image decompression. Trace AQC decompression xrefs and Cinema header/control readers, recording exact field offsets, termination rules, and allocation sizes. Investigate the DAN variants before relaxing validation. Use multiple files to distinguish constants from counts. Compare every decompressed result against a trusted independent result or a fully traced algorithm; add synthetic edge cases and private golden hashes. Only then connect decoded views to researched scene IDs/hotspots and implement dialogue/inventory/puzzles and versioned native saves.
 
 Architecture references used for the independent app: [SDL Android integration](https://wiki.libsdl.org/SDL3/README-android), [SDL audio stream API](https://wiki.libsdl.org/SDL3/SDL_OpenAudioDeviceStream), [pinned SDL3 source](https://github.com/libsdl-org/SDL/tree/7f3ae3d57459e59943a4ecfefc8f6277ec6bf540). Original format findings above derive from the supplied bytes and instruction references, not third-party format guesses.
+
+## Native compressed audio implementation
+
+[Milestone 3](wac-was-milestone-3.md) implements bounded Python/C++ WAC/WAS conversion, validates fifteen complete original assets against isolated original decoder instructions, and connects the C++ decoder to Android playback. It also documents stereo RIFF padding normalization. The earlier audio inspection findings above describe the initial checkpoint.
