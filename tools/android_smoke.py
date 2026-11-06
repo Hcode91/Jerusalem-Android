@@ -359,14 +359,18 @@ def main():
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-preview.jrs'", input=checkpoint)
         # A separate V4 synthetic session exercises accessible ingredient selection and persistence.
         click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Previous navigation session did not stop before V4 setup')
         upgraded = model.replace('NAV_V3', 'NAV_V4') + (
             'item 11 2 0 -750 3600 750 60 0 50 1 "Synthetic stone"\n'
             'item-channel 11 2 0\ncombine 10 11 20 "Synthetic sling"\n')
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=upgraded.encode())
         adb('logcat', '-c')
         click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal: SYNTH_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 scene did not start')
-        for expected in (b'A01 traversal: SYNTH_B.', b'Collected: Synthetic pickup [10]', b'Collected: Synthetic stone [11]'):
+        # Navigation deliberately reopens the last viewed asset. The checkpoint above
+        # restored SYNTH_B; toggling off resets interactions but retains that selection.
+        wait_for(lambda: b'A01 traversal: SYNTH_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 scene did not reopen the selected node')
+        for expected in (b'Collected: Synthetic pickup [10]', b'Collected: Synthetic stone [11]'):
             adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
             wait_for(lambda: expected in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 traversal/pickup failed')
         click_scrolling('Inventory')
