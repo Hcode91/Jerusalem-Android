@@ -182,3 +182,7 @@ Architecture references used for the independent app: [SDL Android integration](
 ## A01 node entry, ambient sounds and presentation state
 
 The user confirmed A01 traversal on Android. [Milestone 8](a01-audio-milestone-8.md) traces actual node-entry sound activation, stream looping, original suffix fallback and volume conversion. It adds 17 extracted ambient bindings and native concurrent looping playback on Android, retaining shared tracks during transitions. The optional reference validates 303 original gain/pan arithmetic cases. New scene audio remains pending Android testing. Object/channel presentation APIs and A01 interaction handlers are partially mapped; their initial state, game clocks and story callbacks remain blockers for authentic automatic animation and pickup progression.
+
+## Complete second-disc corpus
+
+Both uploaded split archives passed full ZIP CRC checks; the new Disc 1 matches the existing image. [Disc 2 survey](disc2-corpus-survey.md) records identities, the 208-file ISO index, successful native static decoding for 119 full nodes, structural counts for 498 channels/5880 frames, seven validated AT3 directories (3712 entries), and 80 CNM/CI2 headers. The separate 8617-byte numbered A07 resource contains two patch-framed records and remains outside full-node support. Disc 1 contains the complementary sound/dialogue resources for these areas. These are host coverage results, not original-routine verification for every new image or additional gameplay support.
