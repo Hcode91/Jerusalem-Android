@@ -25,18 +25,50 @@ def wait_for(predicate, message, seconds=30):
     raise RuntimeError(message)
 
 
+def control_center(xml, label):
+    """Prefer stable accessibility labels; Android themes may uppercase visible text."""
+    tree = ET.fromstring(xml)
+    nodes = list(tree.iter('node'))
+    for attribute in ('content-desc', 'text'):
+        for node in nodes:
+            if node.get(attribute, '').casefold() != label.casefold() or node.get('enabled') == 'false':
+                continue
+            bounds = list(map(int, re.findall(r'-?\d+', node.get('bounds', ''))))
+            if len(bounds) == 4:
+                x1, y1, x2, y2 = bounds
+                if 0 <= x1 < x2 and 0 <= y1 < y2:
+                    return (x1 + x2) // 2, (y1 + y2) // 2
+    return None
+
+
 def click(text):
     def locate():
         adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
-        tree = ET.fromstring(adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml'))
-        for node in tree.iter('node'):
-            if node.get('text') == text:
-                bounds = list(map(int, re.findall(r'\d+', node.get('bounds', ''))))
-                if len(bounds) == 4:
-                    adb('shell', 'input', 'tap', str((bounds[0] + bounds[2]) // 2), str((bounds[1] + bounds[3]) // 2))
-                    return True
+        center = control_center(adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml'), text)
+        if center is not None:
+            adb('shell', 'input', 'tap', str(center[0]), str(center[1]))
+            return True
         return False
     wait_for(locate, f'UI control not found: {text}')
+
+
+def collect_diagnostics():
+    # A failed diagnostic command must not hide the original smoke-test error.
+    commands = [
+        ('logcat.txt', ('logcat', '-d')),
+        ('activity.txt', ('shell', 'dumpsys', 'activity', 'activities')),
+        ('screen.png', ('exec-out', 'screencap', '-p')),
+        ('ui-dump.txt', ('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')),
+        ('ui.xml', ('shell', 'cat /data/local/tmp/jerusalem-ui.xml')),
+    ]
+    errors = []
+    for name, command in commands:
+        try:
+            (OUTPUT / name).write_bytes(adb(*command))
+        except (OSError, subprocess.SubprocessError) as error:
+            errors.append(f'{name}: {error}\n')
+    if errors:
+        (OUTPUT / 'diagnostic-errors.txt').write_text(''.join(errors))
 
 
 def main():
@@ -64,8 +96,7 @@ def main():
         (OUTPUT / 'synthetic-image.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection and synthetic BMP display.\nARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
-        (OUTPUT / 'logcat.txt').write_bytes(adb('logcat', '-d'))
-        (OUTPUT / 'activity.txt').write_bytes(adb('shell', 'dumpsys', 'activity', 'activities'))
+        collect_diagnostics()
 
 
 if __name__ == '__main__':

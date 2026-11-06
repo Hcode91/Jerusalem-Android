@@ -42,7 +42,7 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-Host validation passed CMake/CTest, 761 C++ checks with private original-data checks enabled, 4000 deterministic malformed-input rounds, and ten Python regression tests. Complete original archives were extracted and 30 original WAVs parsed. The target repository is Hcode91/Jerusalem-Android. **Actions build and Android device launch status will be recorded after CI validation.** The first milestone is not complete until those checks pass. This repository does not claim original scene playback.
+Host validation passed CMake/CTest, 761 C++ checks with private original-data checks enabled, 4000 deterministic malformed-input rounds, and fourteen Python regression tests. Complete original archives were extracted and 30 original WAVs parsed. [Actions run 42149071429](https://github.com/Hcode91/Jerusalem-Android/actions/runs/42149071429) successfully built the ARM64 APK, passed Android lint and packaging checks, and launched the x86_64 native engine to Ready. Its subsequent UI test failed because Android uppercased a button label. Control matching now uses stable accessibility descriptions and case-insensitive fallback, with regression coverage; that fix awaits the next Actions result. ARM64 hardware launch and original scene playback remain unverified.
 
 ## Roadmap
 

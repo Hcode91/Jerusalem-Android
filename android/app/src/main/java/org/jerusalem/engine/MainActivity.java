@@ -80,7 +80,8 @@ public class MainActivity extends SDLActivity {
 
     private Button button(String label, View.OnClickListener action) {
         Button button = new Button(this);
-        button.setText(label); button.setMinHeight(48); button.setOnClickListener(action);
+        button.setText(label); button.setAllCaps(false); button.setContentDescription(label);
+        button.setMinHeight(48); button.setOnClickListener(action);
         return button;
     }
 

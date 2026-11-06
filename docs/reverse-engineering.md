@@ -143,11 +143,11 @@ Executable diagnostics link object presentation, bag animation, accessibility, r
 ## 9. Validation performed and remaining gates
 
 - C++ host parser suite: **761 explicit checks** including the private AT3/DAN prefixes, complete A01 archive, and original menu WAV expectations, every-byte truncation cases for valid synthetic WAV/BMP/AT3 inputs, malformed offsets/dimensions/chunks, and **4000** deterministic malformed-input rounds. ASan/UBSan passed with local LeakSanitizer disabled because the sandbox cannot run its tracing step. CI retains default leak checking.
-- Python regression suite: ten tests passed across PE32 and raw MODE1/ISO9660 parsing, including truncation, invalid file-backed offsets/RVAs, named/ordinal imports, sector modes, dual-endian mismatch, and unsafe directory identifiers. PE results were cross-checked against `objdump` for the supplied Windows files.
+- Python regression suite: fourteen tests passed across PE32, raw MODE1/ISO9660 parsing, and the emulator test harness, including truncation, invalid file-backed offsets/RVAs, named/ordinal imports, sector modes, dual-endian mismatch, unsafe directory identifiers, uppercase Android control labels, and diagnostic collection after device disconnection. PE results were cross-checked against `objdump` for the supplied Windows files.
 - Real AT3 prefix: 15/325 records listed, all payloads unavailable, incomplete status explicit. Strict extraction refuses the prefix.
 - Real DAN: one level, eight intervals, terminal value 718. aMes/aObj: 343/518 parsed records; duplicate keys retained.
 - Complete archives: all 325 A01 and 765 system records pass strict parsing and raw extraction. All 30 loose Disc 1 WAVs pass PCM parsing. No original graphics decoded and no functional CI2/AQC/WAC/WAS codec is claimed.
-- Android source and Actions workflow are implemented but not yet run in GitHub Actions; device launch, storage provider behaviour, audio lifecycle, and rendering remain validation gates. No APK was built locally.
+- Actions run 42149071429 successfully compiled the ARM64 APK, passed Android lint and packaging checks, and launched the x86_64 native engine to Ready. Its later UI smoke step failed on exact-case matching of an Android-uppercase button label. Accessibility descriptions and case-insensitive fallback now address that failure, with four host regression tests; the new emulator result remains pending. ARM64 hardware launch, storage provider behaviour, audio lifecycle, and image display remain validation gates. No APK was built locally.
 
 ## Next investigation steps
 
