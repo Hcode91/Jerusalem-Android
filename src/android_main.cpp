@@ -161,6 +161,7 @@ class InspectionScene {
       auto data=jerusalem::read_file(path); jerusalem::Bytes b(data);
       const auto description=jerusalem::describe_resource(b,path.filename().string());
       if (description.kind==jerusalem::ResourceKind::Bitmap) renderer_.bitmap(jerusalem::decode_bitmap(b));
+      else if (description.kind==jerusalem::ResourceKind::AqcImage) renderer_.bitmap(jerusalem::decode_aqc(b));
       else if (description.kind==jerusalem::ResourceKind::Wave || description.kind==jerusalem::ResourceKind::CompressedAudio)
         audio_.play(b,path.filename().string());
       renderer_.preview(description.details);

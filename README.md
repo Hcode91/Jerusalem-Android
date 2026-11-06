@@ -9,7 +9,8 @@ An independent C++17 / SDL3 Android engine reimplementation for **Jerusalem: The
 - DAN level and interval parsing for the observed text dialect, with explicit `END` termination.
 - PE32 static inspection: sections, named/ordinal imports, relevant strings, SHA-256 identity. It never executes Windows code.
 - Ghidra loader tracing, WAC/WAS block/token inspection and native/Python PCM conversion for the verified mono/stereo dialect. Outputs match the original decoder routines on fifteen complete assets. See [audio decoding and validation](docs/wac-was-milestone-3.md). Android playback is connected and awaits device verification.
-- Standard uncompressed 24/32-bit BMP decoding and integer PCM WAV inspection/playback. The WAV parser has processed all 30 standard WAV files on Disc 1, including an original menu sound. No original image has yet been decoded.
+- Native AQC static-image decoding and Python PNG/native PPM export, verified on all 19 Disc 1 nodes. See [AQC findings](docs/aqc-milestone-4.md). Embedded animation channels and 360-degree projection remain unsupported.
+- Standard uncompressed 24/32-bit BMP decoding and integer PCM WAV inspection/playback. The WAV parser has processed all 30 standard WAV files on Disc 1, including an original menu sound.
 - Streaming ISO9660 extraction from the supplied MODE1/2352 disc image, with checked extents and dual-endian fields.
 - CUE validation for the supplied single MODE1/2352 data-track layout; conventional key/value INI parsing as a separate, explicitly selected dialect.
 - Native SDL3 Android entry point, rendering and audio backends, inspector scene, touch image panning, zoom controls, lifecycle audio pause/resume, diagnostics, and Android Storage Access Framework folder import.
@@ -32,6 +33,8 @@ build-host/jinspect dan /path/to/clip.dan
 build-host/jinspect extract-at3 /path/to/a01.at3 /path/to/new-output-directory
 build-host/jinspect extract-media /path/to/resource /path/to/new-output-directory
 python3 tools/pe_probe.py /path/to/Jerusalem.ex_
+python3 tools/aqc_decode.py /path/to/node.aqc /path/to/new-image.png
+build-host/jinspect decode-aqc /path/to/node.aqc /path/to/new-output-directory
 python3 tools/wac_layout.py /path/to/sound.wac
 python3 tools/wac_decode.py /path/to/sound.wac /path/to/new-sound.wav
 build-host/jinspect decode-audio /path/to/sound.was /path/to/new-output-directory
@@ -47,17 +50,17 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-Current host validation passes CMake/CTest with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds and 29 Python regression tests. CTest also runs the synthetic audio cases through the native decoder. Fifteen original WAC/WAS outputs match original decoder instructions byte for byte after documented container normalization. Standard WAV playback has been confirmed on the user's device. New compressed-audio Android paths and synthetic emulator coverage await Actions/device results; APKs are built only in Actions. The app remains an asset inspector and cannot run original scenes yet.
+Current host validation passes CMake/CTest with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds and 36 Python regression tests. CTest also runs the synthetic audio cases through the native decoder. Fifteen original WAC/WAS outputs match original decoder instructions byte for byte after documented container normalization. Standard WAV playback has been confirmed on the user's device. New AQC image display, compressed-audio Android paths and synthetic emulator coverage await Actions/device results; APKs are built only in Actions. The app remains an asset inspector and cannot run original scenes yet.
 
 ## Roadmap
 
 1. Run the workflow in the intended GitHub repository, fix CI failures, and verify launch/import on an ARM64 device.
 2. Complete A01 and system AT3 archives have been extracted, and all 30 Disc 1 standard WAVs parse successfully. Verify original sound playback on device and reverse the Cinema image payloads.
-3. Reverse the AT3 payload compression and AQC image codec using loader call sites and complete examples; add byte-exact decoder regression checks before rendering scenes.
+3. AQC static decoding is established. Trace the original 360-degree mapping and field of view, then introduce the requested SDL2 desktop viewer. Investigate AQC animation channels and Cinema payloads separately.
 4. Reverse Cinema/CI2 frame tables. Expand the verified WAC/WAS audio corpus and check native compressed-audio playback on device.
 5. Trace scene activation, node transitions, hotspots, object IDs, dialogue triggers, and puzzle logic. Build the corresponding runtime only from established semantics.
 6. Design versioned native saves after the game state model is understood. Original `.ars` saves are currently unsupported.
 
 ## Licence and data
 
-New project code is MIT licensed; SDL3 is separately licensed under zlib and its licence is packaged in the APK by CI. This project is not affiliated with the original creators. Game files remain user supplied and are not covered by this repository's licence. No CD authentication, DRM bypass or licence falsification is implemented. The engine never executes original binaries. An optional private-data research tool uses isolated CPU emulation of two audio routines solely as a decoder reference; it is not included in the APK.
+New project code is MIT licensed; SDL3 is separately licensed under zlib and its licence is packaged in the APK by CI. This project is not affiliated with the original creators. Game files remain user supplied and are not covered by this repository's licence. No CD authentication, DRM bypass or licence falsification is implemented. The engine never executes original binaries. An optional private-data research tool uses isolated CPU emulation of four audio/image routines solely as decoder references; it is not included in the APK.

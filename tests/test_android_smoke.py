@@ -21,6 +21,13 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_synthetic_aqc_contains_known_colour_bars(self):
+        sys.path.insert(0, str(Path(__file__).parents[1] / 'tools'))
+        from aqc_decode import decode
+        info, rgb = decode(smoke.synthetic_aqc())
+        self.assertEqual((info['width'], info['height']), (8, 4))
+        self.assertEqual(rgb, bytes([248, 0, 0, 0, 252, 0, 0, 0, 248, 248, 252, 248]) * 8)
+
     def test_compressed_audio_signals_are_nonempty_valid_waves(self):
         sys.path.insert(0, str(Path(__file__).parents[1] / 'tools'))
         from wac_decode import decode

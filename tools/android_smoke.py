@@ -106,6 +106,17 @@ def compressed_audio_fixtures():
     return {'synthetic-mono.wac': mono, 'synthetic-stereo.was': stereo}
 
 
+def synthetic_aqc():
+    """A small original-free colour-bar image in the supported AQC static dialect."""
+    def pack(bits):
+        bits += '0' * (-len(bits) % 8)
+        return int(bits, 2).to_bytes(len(bits) // 8, 'big')
+    header = struct.pack('<III4f6I', 8, 4, 2, 0., 360., -75., 75., 0, 8, 0, 4, 64, 0x1000)
+    indices = pack('0' + '0' * 13 + '11' * 7)
+    palette = pack(''.join('0' + f'{n:016b}' for n in (0xf800, 0x07e0, 0x001f, 0xffff)) + '11' * 32396)
+    return struct.pack('<I', len(indices)) + header + indices + struct.pack('<I', len(palette)) + palette
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Android runtime smoke tests run only in GitHub Actions')
@@ -138,6 +149,7 @@ def main():
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-audio.wav'", input=audio.getvalue())
         for name, data in compressed_audio_fixtures().items():
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=data)
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-node.aqc'", input=synthetic_aqc())
         click('Browse assets')
         click('synthetic.bmp')
         click('Close')
@@ -172,7 +184,13 @@ def main():
                      f'{name} did not decode and start playing')
             wait_for(lambda: ('Audio buffer drained: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                      f'{name} decoded output did not drain')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP display, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        click('Browse assets')
+        click('synthetic-node.aqc')
+        click('Close')
+        wait_for(lambda: b'AQC static node image: 8 x 4' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Native AQC decoding/display path did not complete')
+        (OUTPUT / 'aqc-static-image.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

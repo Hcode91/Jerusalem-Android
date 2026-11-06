@@ -71,7 +71,7 @@ The new engine uses SDL3 textures and independently decodes only uncompressed BI
 
 **Verified:** DSOUND.dll is imported by ordinal **1** at IAT RVA `0xa6020`; no function name is encoded in that import. WINMM imports mmioOpenA/mmioRead/mmioDescend/mmioAscend and related functions, as well as timeGetTime. This is evidence of DirectSound linkage and RIFF-aware multimedia I/O, not proof of a particular WAC/WAS format.
 
-Executable strings identify `.wav`, `.wac`, `.was` extensions and both `aSecComSouMono` and `aSecComSouStereo` header/decompression paths. Concrete call sites and complete samples are needed to assign codecs and channel layouts. No claim of PCM, ADPCM, zlib, or another codec is made for WAC/WAS.
+Executable strings identify `.wav`, `.wac`, `.was` extensions and both `aSecComSouMono` and `aSecComSouStereo` header/decompression paths. Subsequent tracing established custom mono delta and stereo cache/repeat codecs; see milestone 3 below. These are not identified as a standard codec.
 
 The new backend validates standard RIFF/WAVE chunks, odd-byte padding, PCM geometry/byte rate/block alignment, and data alignment. Supported playback is integer PCM mono/stereo, 8/16-bit, 1000..192000 Hz, through SDL3 audio streams. Truncated and unsupported codecs fail explicitly. All **30** loose original Disc 1 WAVs pass this parser. MENU1.WAV is mono 22050 Hz, 16-bit PCM with 18866 sample bytes. Actual device sound playback remains unobserved.
 
@@ -79,7 +79,7 @@ A subsequent uploaded `a02_crowd.wav` is 649156 bytes, SHA-256 `ae1ebf5a785a7e28
 
 The Android UI previously queued playback and immediately opened a report dialog. SDLActivity's `onWindowFocusChanged(false)` can switch its native state to PAUSED, so starting a sound behind that dialog is unreliable. PCM WAV selection now avoids a report modal and waits for main-window focus before queueing playback. Play/Replay, media-volume routing, live native status/error polling, and output-buffer diagnostics were added. The exact-file host parser regression passes; the new Android playback/replay smoke result and audible hardware playback remain pending. No codec change or audio amplification is applied to the original file.
 
-Full WAC and WAS examples begin with two u32 words, followed by RIFF at offset 8. Subsequent Ghidra tracing established a stored block count and wrapper output length. **Correction:** in the footstep WAC, wrapper output length 29228 includes mono block padding; the embedded RIFF total is 29138, while the stored compressed file is 18716 bytes. Simply carving the embedded RIFF cannot produce valid PCM. The block layouts and bit-token rules now have an independent structural inspector validated on nine complete files; see [milestone 2](wac-was-milestone-2.md). A sample-reconstructing converter and Android compressed-audio playback are not implemented yet.
+Full WAC and WAS examples begin with two u32 words, followed by RIFF at offset 8. Subsequent Ghidra tracing established a stored block count and wrapper output length. **Correction:** in the footstep WAC, wrapper output length 29228 includes mono block padding; the embedded RIFF total is 29138, while the stored compressed file is 18716 bytes. Simply carving the embedded RIFF cannot produce valid PCM. The block layouts and bit-token rules now have an independent structural inspector validated on nine complete files; see [milestone 2](wac-was-milestone-2.md). [Milestone 3](wac-was-milestone-3.md) subsequently implemented sample reconstruction and connected Android playback.
 
 ## 4. Cinema/CI2 video and animation
 
@@ -120,7 +120,7 @@ The sample's first record has offset **82907** (`32 + 82875`), stored length **7
 
 **Verified sample observations:** AQC has no standard image signature at offset zero. u32 LE values at offsets 0, 4, 8, 12 are **593055**, **2048**, **856**, **2**. IEEE754 interpretations at `0x14`, `0x18`, `0x1c` yield **360**, **-75**, **75**. Words at `0x24`, `0x2c`, `0x30`, `0x34` are **2048**, **856**, **3506176**, **4096**. The arithmetic `2048 × 856 × 2 = 3506176` holds.
 
-**Inference:** these may encode image dimensions, a two-byte pixel representation, and angular bounds for a panorama. A single numerical coincidence is insufficient to assign field semantics or implement a decoder. No AQC pixels have been recovered.
+**Updated verification:** Ghidra tracing established image dimensions, source bytes per pixel, the two compressed streams, codebook expansion and RGB565 colours. All 19 Disc 1 static images now decode and match original index/codebook routines. Angular/projection semantics remain under investigation. See [milestone 4](aqc-milestone-4.md) for exact offsets, bounds and validation.
 
 Executable strings at VA `0x4ab940` onward identify `aSecComAqi::DecompressNode` and `DecompressChannel`. Format strings reference `%s.aqc` and numbered AQC filenames. Diagnostics also identify rotations, puzzles, animation images, hotspots, and accessibility. These suggest relationships between views, transitions, and interactions. Actual node graph layout, coordinates, hotspot hit testing, projection, and script effects have not been traced. The Android scene manager currently has only an inspection scene; there is no invented game navigation.
 
@@ -150,7 +150,7 @@ Executable diagnostics link object presentation, bag animation, accessibility, r
 - Python regression suite: fourteen tests passed across PE32, raw MODE1/ISO9660 parsing, and the emulator test harness, including truncation, invalid file-backed offsets/RVAs, named/ordinal imports, sector modes, dual-endian mismatch, unsafe directory identifiers, uppercase Android control labels, and diagnostic collection after device disconnection. PE results were cross-checked against `objdump` for the supplied Windows files.
 - Real AT3 prefix: 15/325 records listed, all payloads unavailable, incomplete status explicit. Strict extraction refuses the prefix.
 - Real DAN: one level, eight intervals, terminal value 718. aMes/aObj: 343/518 parsed records; duplicate keys retained.
-- Complete archives: all 325 A01 and 765 system records pass strict parsing and raw extraction. All 30 loose Disc 1 WAVs pass PCM parsing. No original graphics decoded and no functional CI2/AQC/WAC/WAS codec is claimed.
+- Complete archives: all 325 A01 and 765 system records pass strict parsing and raw extraction. All 30 loose Disc 1 WAVs pass PCM parsing. Subsequent milestones decode AQC static images and WAC/WAS audio; Cinema/CI2 graphics remain unsupported.
 - Actions run 42149071429 successfully compiled the ARM64 APK, passed Android lint and packaging checks, and launched the x86_64 native engine to Ready. Its later UI smoke step failed on exact-case matching of an Android-uppercase button label. Accessibility descriptions and case-insensitive fallback now address that failure, with four host regression tests; the new emulator result remains pending. ARM64 hardware launch, storage provider behaviour, audio lifecycle, and image display remain validation gates. No APK was built locally.
 
 ## Next investigation steps
@@ -162,3 +162,7 @@ Architecture references used for the independent app: [SDL Android integration](
 ## Native compressed audio implementation
 
 [Milestone 3](wac-was-milestone-3.md) implements bounded Python/C++ WAC/WAS conversion, validates fifteen complete original assets against isolated original decoder instructions, and connects the C++ decoder to Android playback. It also documents stereo RIFF padding normalization. The earlier audio inspection findings above describe the initial checkpoint.
+
+## Native original-image implementation
+
+[Milestone 4](aqc-milestone-4.md) implements bounded Python/C++ AQC static decoding and Android image display. All 19 Disc 1 static nodes have original-routine-verified indices/codebooks and matching native/Python pixels. Animation tails are reported as undecoded. Projection, hotspots, navigation and Cinema decoding remain future work.

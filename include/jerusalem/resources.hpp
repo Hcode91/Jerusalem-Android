@@ -41,6 +41,10 @@ struct Bitmap {
   std::uint32_t width, height;
   std::vector<std::uint8_t> rgba;
 };
+struct AqcInfo {
+  std::uint32_t width, height;
+  std::size_t indices_offset, indices_size, palette_offset, palette_size, static_end, tail_size;
+};
 struct Cue { std::string binary_name; std::uint32_t sector_size = 2352; };
 struct Embedded { std::string kind; std::size_t offset, size; };
 struct IniEntry { std::string section, key, value; std::size_t line; };
@@ -53,7 +57,7 @@ struct ArtDirectory {
 struct LocalizedEntry { std::string key, language, title, text; };
 struct DanTriple { std::uint32_t first, second, third; };
 struct Dan { std::vector<DanTriple> levels, intervals; std::uint32_t end; };
-enum class ResourceKind { Unsupported, Bitmap, Wave, CompressedAudio, Archive, LocalizedText, DialogueAnimation, Text };
+enum class ResourceKind { Unsupported, Bitmap, AqcImage, Wave, CompressedAudio, Archive, LocalizedText, DialogueAnimation, Text };
 struct ResourceDescription {
   ResourceKind kind;
   std::string summary;
@@ -68,6 +72,8 @@ Wave parse_wave(Bytes bytes);
 GameAudio parse_game_audio(Bytes bytes);
 std::vector<std::uint8_t> decode_game_audio(Bytes bytes);
 Bitmap decode_bitmap(Bytes bytes);
+AqcInfo parse_aqc(Bytes bytes);
+Bitmap decode_aqc(Bytes bytes);
 Cue parse_cue(const std::string& text);
 std::vector<IniEntry> parse_ini(const std::string& text);
 std::vector<Embedded> scan_media(Bytes bytes);
