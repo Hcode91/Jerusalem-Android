@@ -7,6 +7,7 @@ struct PickupEffect { std::uint32_t object,counter,milestone; };
 PickupEffect parse_pickup_effect(Bytes code,std::uint32_t address);
 // Fresh preview state: pickups and verified, consuming two-item combinations.
 class InteractionState {
+  friend class A01Story; // Story-only bag clearing cannot be represented by preview checkpoints.
   SceneGraph graph_;
   std::map<std::uint32_t,std::vector<bool>> visibility_;
   std::map<std::uint32_t,std::uint8_t> variables_;

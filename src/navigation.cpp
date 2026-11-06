@@ -1,5 +1,6 @@
 #include "jerusalem/navigation.hpp"
 #include "jerusalem/interactions.hpp"
+#include "jerusalem/stage.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -96,6 +97,50 @@ std::vector<SetupCall> parse_setup_calls(Bytes b,std::uint32_t address) {
   }
   if (!stack.empty()) throw ParseError("unfinished setup argument packet");
   return calls;
+}
+
+StageSetup extract_a01_stage(Bytes b) {
+  // Reuse the version gate; registration bytes are interpreted as constants, never executed.
+  (void)extract_a01_navigation(b);
+  const Pe pe(b);StageSetup result;
+  const auto consume=[&](const std::vector<SetupCall>& calls) {
+    for(const auto& call:calls) {
+      const auto& a=call.arguments;
+      if(call.target==0x42af00) {
+        if(a.size()!=5 || a[4]!=1)throw ParseError("unsupported puzzle background");
+        result.backgrounds.push_back({a[0],pe.name(a[1],true),signed_word(a[2]),signed_word(a[3])});
+      }else if(call.target==0x429ac0 || call.target==0x429c20) {
+        if(a.size()!=9 || a[6]>1)throw ParseError("unsupported story access");
+        const auto index=std::count_if(result.access.begin(),result.access.end(),[&](const StageAccess& h){return h.object==a[0];});
+        result.access.push_back({a[0],a[1],static_cast<std::uint32_t>(index),call.target==0x429c20,a[6]!=0,signed_word(a[2]),signed_word(a[3]),signed_word(a[4]),signed_word(a[5]),a[7],a[8]});
+      }else if(call.target==0x42a270 || call.target==0x42a390) {
+        const bool animated=call.target==0x42a390;
+        if(a.size()!=(animated?7U:4U))throw ParseError("unsupported story rotation layer");
+        result.layers.push_back({a[0],a[1],a[2],true,animated,"",a[3],animated?a[4]:1,animated?a[6]:0,1000,0,0,animated?real(a[5]):0});
+      }else if(call.target==0x42a080 || call.target==0x42a170) {
+        const bool animated=call.target==0x42a170;
+        if(a.size()!=(animated?12U:9U))throw ParseError("unsupported story puzzle layer");
+        if(animated && a[4]!=0 && a[4]!=1)throw ParseError("unsupported animation resource selector");
+        result.layers.push_back({a[0],a[1],a[2],false,animated,pe.name(a[3],true),animated?a[4]:0,animated?a[9]:1,animated?a[11]:0,a[8],signed_word(a[animated?5:4]),signed_word(a[animated?6:5]),animated?real(a[10]):0});
+        // ObjPreAddAniToPuz: object,pres,puzzle,stem,type,x,y,flags,priority,count,fps,mode.
+      }
+    }
+  };
+  consume(parse_setup_calls(pe.at(begin,end-begin),begin));
+  for(const auto& range:{std::pair{end,0x47e450U},std::pair{0x47e450U,0x47f01bU}}) {
+    const auto bytes=pe.at(range.first,range.second-range.first);std::vector<std::uint8_t> code{0x56,0x8b,0xf1};code.insert(code.end(),bytes.data(),bytes.data()+bytes.size());
+    consume(parse_setup_calls(Bytes(code),range.first-3));
+  }
+  // The sound setup uses runtime load-source arguments. Read only the pinned ID/name pushes.
+  for(std::uint32_t address=0x47fab0;address<0x47ff60;++address) {
+    const auto p=pe.at(address,19);
+    if(p.u8(0)==0x68 && p.u8(5)==0x6a && p.u8(6)==5 && p.u8(7)==0x68 && p.is(12,std::string("\x8b\xce\xe8",3)) && std::int64_t(address)+19+p.i32(15)==0x42c8d0) {
+      auto name=pe.name(p.u32(1),true);if(name.size()<5 || name.substr(name.size()-4)!=".WAC")throw ParseError("unsupported story voice suffix");name.resize(name.size()-4);
+      result.dialogues.push_back({p.u32(8),"A01",std::move(name)});
+    }
+  }
+  // Round-trip validates every field before exposing a usable model.
+  return parse_stage(write_stage(result));
 }
 
 SceneGraph extract_a01_navigation(Bytes b) {

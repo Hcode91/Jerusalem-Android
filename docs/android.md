@@ -96,3 +96,8 @@ The next APK adds a combined set of interactions. Refresh connections by long-pr
 At A01S01N04R01, using harness/stone/sling on its USE marker plays ADRI_DIA002 with timed subtitles. Import English `sound/eng` and `dia/eng` alongside the nodes. Other character conversations and the successor interaction remain unsupported.
 
 **Browse assets** can now play supported progressive CI2 movies from `a01/pla/eng`. Try A01S01_AN004.CI2 or A01S01_AN007C.CI2; **Replay movie** restarts, and **Stop audio** stops the preview too. Cinema audio is stereo when its encoded channel field is 1. Interlaced/unsupported variants report errors. This is movie preview, not scripted game progression. See [full evidence and testing sequence](a01-story-cinema-milestone-12.md). Android build/runtime results for this milestone are pending.
+
+
+## A01 story opening and first escape
+
+After installing the milestone-13 APK, long-press **A01 navigation** and select the original executable again to extract the new puzzle layouts, then tap **Start A01 story**. Follow the [step-by-step phone test](a01-story-milestone-13.md#phone-test-from-an-upgraded-or-fresh-installation). The first escape is connected to original media; the following topic puzzle, full A01 ending and story checkpoints are unfinished. Existing preview checkpoints are accessed through **A01 navigation**. No original assets enter the APK.
