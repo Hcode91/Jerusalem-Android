@@ -61,8 +61,25 @@ def checkpoint_states(logs):
 
 
 def current_ui():
-    adb('shell', 'uiautomator dump /data/local/tmp/jerusalem-ui.xml')
-    return adb('shell', 'cat /data/local/tmp/jerusalem-ui.xml')
+    path = '/data/local/tmp/jerusalem-ui.xml'
+    # A failed dump must not accidentally reuse a hierarchy from an earlier screen.
+    for attempt in range(3):
+        adb('shell', 'rm', '-f', path)
+        output = adb('shell', f'uiautomator dump {path}', stderr=subprocess.STDOUT)
+        if b'could not get idle state' in output:
+            if attempt == 2:
+                raise RuntimeError('Android UI hierarchy unavailable after 3 attempts: '+output.decode('utf-8', errors='replace').strip())
+            print('Android UI was not idle; retrying a fresh hierarchy dump', flush=True)
+            time.sleep(0.25)
+            continue
+        if b'ERROR:' in output:
+            raise RuntimeError('Android UI hierarchy unavailable: '+output.decode('utf-8', errors='replace').strip())
+        try:
+            xml = adb('shell', f'cat {path}')
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError('Android UI dump produced no hierarchy: '+output.decode('utf-8', errors='replace').strip()) from error
+        ET.fromstring(xml)
+        return xml
 
 
 def click(text):
@@ -348,27 +365,27 @@ def main():
         for name, data in compressed_audio_fixtures().items():
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=data)
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-node.aqc'", input=synthetic_animated_aqc())
-        click('Browse assets')
+        click_scrolling('Browse assets')
         click('synthetic.bmp')
         click('Close')
         wait_for(lambda: b'BMP: 2 x 2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native BMP rendering path did not complete')
         adb('shell', 'pidof', PACKAGE)
         (OUTPUT / 'synthetic-image.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        click('Browse assets')
+        click_scrolling('Browse assets')
         click('synthetic-labels.ini')
         wait_for(lambda: b'Synthetic label' in current_ui(), 'Decoded localization text was not displayed')
         click('Close')
         wait_for(lambda: b'Localization:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Native view did not use the localization-aware summary')
         (OUTPUT / 'text-labels.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        click('Browse assets')
+        click_scrolling('Browse assets')
         click('synthetic-audio.wav')
         # Selecting a WAV must leave the main window focused, without a report modal.
         wait_for(lambda: b'Playing audio: synthetic-audio.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Selecting a PCM WAV did not start the native audio stream')
         wait_for(lambda: b'Audio buffer drained: synthetic-audio.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'The native audio output device did not consume the PCM stream')
-        click('Play audio')
+        click_scrolling('Play audio')
         wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'Playing audio: synthetic-audio.wav') >= 2,
                  'Play audio did not replay the selected sound')
         logs = adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')
@@ -376,13 +393,13 @@ def main():
             raise RuntimeError('Audio smoke check did not use an Android output backend')
         (OUTPUT / 'audio-playback.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         for name in compressed_audio_fixtures():
-            click('Browse assets')
+            click_scrolling('Browse assets')
             click(name)
             wait_for(lambda: ('Playing audio: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                      f'{name} did not decode and start playing')
             wait_for(lambda: ('Audio buffer drained: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                      f'{name} decoded output did not drain')
-        click('Browse assets')
+        click_scrolling('Browse assets')
         click('synthetic-node.aqc')
         click('Close')
         wait_for(lambda: b'AQC static node image: 8 x 4' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
@@ -658,7 +675,7 @@ def main():
         if b'A01 story stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
             raise RuntimeError('Story emitted a decoder, layout or playback error')
         (OUTPUT / 'synthetic-story-callbacks.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        click('Menu')
+        click_scrolling('Menu')
         click_menu('Save Game')
         wait_for(lambda: b'Game saved.' in current_ui(), 'Menu Save Game did not finish')
         story_save = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-story.jrs')
@@ -673,9 +690,9 @@ def main():
         wait_for(lambda: b'Story session: action=load scene=1010105' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Manual story save did not restore after a process restart')
         wait_for(lambda: b'Inventory' in current_ui(), 'Load Game did not dismiss the menu')
-        click('Menu');click_menu('Continue')
+        click_scrolling('Menu');click_menu('Continue')
         wait_for(lambda: b'Inventory' in current_ui(), 'Continue did not return to the game')
-        click('Menu')
+        click_scrolling('Menu')
         # A bad manual save must leave the active game resumable.
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-story.jrs'", input=b'bad story save')
         click_menu('Load Game');click('Manual save')
@@ -683,10 +700,10 @@ def main():
         click_menu('Continue')
         wait_for(lambda: b'Inventory' in current_ui(), 'Failed load damaged the active session')
 
-        click('Menu');adb('logcat', '-c');click_menu('New Game')
+        click_scrolling('Menu');adb('logcat', '-c');click_menu('New Game')
         wait_for(lambda: b'Audio buffer drained: SYNTH_VOICE_10999' not in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S') and b'Dialogue started: id=10999' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Opening speech did not become active for save testing')
-        click('Menu');click_menu('Save Game')
+        click_scrolling('Menu');click_menu('Save Game')
         wait_for(lambda: b'Game saved.' in current_ui(), 'Speech save did not finish')
         click_menu('Load Game');click('Manual save')
         wait_for(lambda: re.search(rb'Story session: action=load scene=10045 media_ms=[1-9][0-9]*', adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')),

@@ -22,6 +22,29 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_current_ui_retries_idle_and_reads_only_a_fresh_dump(self):
+        xml = ui({'text': 'New Game', 'enabled': 'true', 'bounds': '[0,0][100,48]'})
+        replies = [b'', b'ERROR: could not get idle state.', b'', b'UI hierchary dumped to file', xml]
+        with patch.object(smoke, 'adb', side_effect=replies) as adb, patch.object(smoke.time, 'sleep'):
+            self.assertEqual(smoke.current_ui(), xml)
+            self.assertEqual(adb.call_args_list[0].args, ('shell', 'rm', '-f', '/data/local/tmp/jerusalem-ui.xml'))
+            self.assertEqual(adb.call_args_list[2].args, adb.call_args_list[0].args)
+            self.assertEqual(adb.call_count, 5)
+
+    def test_current_ui_reports_persistent_idle_failure_without_reading_old_xml(self):
+        replies = [b'', b'ERROR: could not get idle state.']*3
+        with patch.object(smoke, 'adb', side_effect=replies) as adb, patch.object(smoke.time, 'sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'unavailable after 3 attempts.*could not get idle state'):
+                smoke.current_ui()
+            self.assertEqual(adb.call_count, 6)
+            self.assertFalse(any('cat ' in str(call.args) for call in adb.call_args_list))
+
+    def test_current_ui_does_not_retry_unrelated_dump_errors(self):
+        with patch.object(smoke, 'adb', side_effect=[b'', b'ERROR: not connected']) as adb:
+            with self.assertRaisesRegex(RuntimeError, 'not connected'):
+                smoke.current_ui()
+            self.assertEqual(adb.call_count, 2)
+
     def test_checkpoint_evidence_distinguishes_save_load_and_other_logs(self):
         logs = (b'Checkpoint state: action=save node=2 yaw=90.500000 pitch=-12.250000 fov=64.000000 inventory=1\n'
                 b'Other status\nCheckpoint state: action=load node=2 yaw=90.500000 pitch=-12.250000 fov=64.000000 inventory=1\n')
@@ -64,6 +87,14 @@ class SmokeHarnessTests(unittest.TestCase):
             smoke.click_menu('New Game')
             self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '220', '20', '220', '200', '300'))
             self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '220', '50'))
+
+    def test_offscreen_play_audio_uses_the_scrollable_toolbar(self):
+        before = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,100][300,150]'})
+        after = ui({'content-desc': 'Play audio', 'enabled': 'true', 'bounds': '[80,100][240,150]'})
+        with patch.object(smoke, 'current_ui', side_effect=[before, after]), patch.object(smoke, 'adb') as adb:
+            smoke.click_scrolling('Play audio')
+            self.assertEqual(adb.call_args_list[0].args[:3], ('shell', 'input', 'swipe'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '160', '125'))
 
     def test_movie_below_browser_fold_is_scrolled_into_view(self):
         before = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,572][320,620]'},
