@@ -1,0 +1,683 @@
+diff --git a/android-project/app/src/main/java/org/libsdl/app/HIDDeviceBLESteamController.java b/android-project/app/src/main/java/org/libsdl/app/HIDDeviceBLESteamController.java
+--- a/android-project/app/src/main/java/org/libsdl/app/HIDDeviceBLESteamController.java
++++ b/android-project/app/src/main/java/org/libsdl/app/HIDDeviceBLESteamController.java
+@@ -76,59 +76,65 @@
+         }
+ 
+         public void run() {
+-            // This is executed in main thread
+-            BluetoothGattCharacteristic chr;
+-
+-            switch (mOp) {
+-                case CHR_READ:
+-                    chr = getCharacteristic(mUuid);
+-                    //Log.v(TAG, "Reading characteristic " + chr.getUuid());
+-                    if (!mGatt.readCharacteristic(chr)) {
+-                        Log.e(TAG, "Unable to read characteristic " + mUuid.toString());
+-                        mResult = false;
++            try {
++                // This is executed in main thread
++                BluetoothGattCharacteristic chr;
++
++                switch (mOp) {
++                    case CHR_READ:
++                        chr = getCharacteristic(mUuid);
++                        //Log.v(TAG, "Reading characteristic " + chr.getUuid());
++                        if (!mGatt.readCharacteristic(chr)) {
++                            Log.e(TAG, "Unable to read characteristic " + mUuid.toString());
++                            mResult = false;
++                            break;
++                        }
++                        mResult = true;
+                         break;
+-                    }
+-                    mResult = true;
+-                    break;
+-                case CHR_WRITE:
+-                    chr = getCharacteristic(mUuid);
+-                    //Log.v(TAG, "Writing characteristic " + chr.getUuid() + " value=" + HexDump.toHexString(value));
+-                    chr.setValue(mValue);
+-                    if (!mGatt.writeCharacteristic(chr)) {
+-                        Log.e(TAG, "Unable to write characteristic " + mUuid.toString());
+-                        mResult = false;
++                    case CHR_WRITE:
++                        chr = getCharacteristic(mUuid);
++                        //Log.v(TAG, "Writing characteristic " + chr.getUuid() + " value=" + HexDump.toHexString(value));
++                        chr.setValue(mValue);
++                        if (!mGatt.writeCharacteristic(chr)) {
++                            Log.e(TAG, "Unable to write characteristic " + mUuid.toString());
++                            mResult = false;
++                            break;
++                        }
++                        mResult = true;
+                         break;
+-                    }
+-                    mResult = true;
+-                    break;
+-                case ENABLE_NOTIFICATION:
+-                    chr = getCharacteristic(mUuid);
+-                    //Log.v(TAG, "Writing descriptor of " + chr.getUuid());
+-                    if (chr != null) {
+-                        BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
+-                        if (cccd != null) {
+-                            int properties = chr.getProperties();
+-                            byte[] value;
+-                            if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == BluetoothGattCharacteristic.PROPERTY_NOTIFY) {
+-                                value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
+-                            } else if ((properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) == BluetoothGattCharacteristic.PROPERTY_INDICATE) {
+-                                value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
+-                            } else {
+-                                Log.e(TAG, "Unable to start notifications on input characteristic");
+-                                mResult = false;
+-                                return;
++                    case ENABLE_NOTIFICATION:
++                        chr = getCharacteristic(mUuid);
++                        //Log.v(TAG, "Writing descriptor of " + chr.getUuid());
++                        if (chr != null) {
++                            BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
++                            if (cccd != null) {
++                                int properties = chr.getProperties();
++                                byte[] value;
++                                if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == BluetoothGattCharacteristic.PROPERTY_NOTIFY) {
++                                    value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
++                                } else if ((properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) == BluetoothGattCharacteristic.PROPERTY_INDICATE) {
++                                    value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
++                                } else {
++                                    Log.e(TAG, "Unable to start notifications on input characteristic");
++                                    mResult = false;
++                                    return;
++                                }
++
++                                mGatt.setCharacteristicNotification(chr, true);
++                                cccd.setValue(value);
++                                if (!mGatt.writeDescriptor(cccd)) {
++                                    Log.e(TAG, "Unable to write descriptor " + mUuid.toString());
++                                    mResult = false;
++                                    return;
++                                }
++                                mResult = true;
+                             }
+-
+-                            mGatt.setCharacteristicNotification(chr, true);
+-                            cccd.setValue(value);
+-                            if (!mGatt.writeDescriptor(cccd)) {
+-                                Log.e(TAG, "Unable to write descriptor " + mUuid.toString());
+-                                mResult = false;
+-                                return;
+-                            }
+-                            mResult = true;
+                         }
+-                    }
++                }
++            } catch (SecurityException denied) {
++                mResult = false;
++                Log.w(TAG, "Bluetooth access denied", denied);
++                return;
+             }
+         }
+ 
+@@ -186,14 +192,19 @@
+     // Because on Chromebooks we show up as a dual-mode device, it will attempt to connect TRANSPORT_AUTO, which will use TRANSPORT_BREDR instead
+     // of TRANSPORT_LE.  Let's force ourselves to connect low energy.
+     private BluetoothGatt connectGatt(boolean managed) {
+-        if (Build.VERSION.SDK_INT >= 23 /* Android 6.0 (M) */) {
+-            try {
+-                return mDevice.connectGatt(mManager.getContext(), managed, this, TRANSPORT_LE);
+-            } catch (Exception e) {
++        try {
++            if (Build.VERSION.SDK_INT >= 23 /* Android 6.0 (M) */) {
++                try {
++                    return mDevice.connectGatt(mManager.getContext(), managed, this, TRANSPORT_LE);
++                } catch (Exception e) {
++                    return mDevice.connectGatt(mManager.getContext(), managed, this);
++                }
++            } else {
+                 return mDevice.connectGatt(mManager.getContext(), managed, this);
+             }
+-        } else {
+-            return mDevice.connectGatt(mManager.getContext(), managed, this);
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return null;
+         }
+     }
+ 
+@@ -202,140 +213,159 @@
+     }
+ 
+     protected int getConnectionState() {
+-
+-        Context context = mManager.getContext();
+-        if (context == null) {
+-            // We are lacking any context to get our Bluetooth information.  We'll just assume disconnected.
++        try {
++
++            Context context = mManager.getContext();
++            if (context == null) {
++                // We are lacking any context to get our Bluetooth information.  We'll just assume disconnected.
++                return BluetoothProfile.STATE_DISCONNECTED;
++            }
++
++            BluetoothManager btManager = (BluetoothManager)context.getSystemService(Context.BLUETOOTH_SERVICE);
++            if (btManager == null) {
++                // This device doesn't support Bluetooth.  We should never be here, because how did
++                // we instantiate a device to start with?
++                return BluetoothProfile.STATE_DISCONNECTED;
++            }
++
++            return btManager.getConnectionState(mDevice, BluetoothProfile.GATT);
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
+             return BluetoothProfile.STATE_DISCONNECTED;
+         }
+-
+-        BluetoothManager btManager = (BluetoothManager)context.getSystemService(Context.BLUETOOTH_SERVICE);
+-        if (btManager == null) {
+-            // This device doesn't support Bluetooth.  We should never be here, because how did
+-            // we instantiate a device to start with?
+-            return BluetoothProfile.STATE_DISCONNECTED;
+-        }
+-
+-        return btManager.getConnectionState(mDevice, BluetoothProfile.GATT);
+     }
+ 
+     public void reconnect() {
+-
+-        if (getConnectionState() != BluetoothProfile.STATE_CONNECTED) {
+-            mGatt.disconnect();
+-            mGatt = connectGatt();
+-        }
+-
++        try {
++
++            if (getConnectionState() != BluetoothProfile.STATE_CONNECTED) {
++                mGatt.disconnect();
++                mGatt = connectGatt();
++            }
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return;
++        }
+     }
+ 
+     protected void checkConnectionForChromebookIssue() {
+-        if (!mIsChromebook) {
+-            // We only do this on Chromebooks, because otherwise it's really annoying to just attempt
+-            // over and over.
+-            return;
+-        }
+-
+-        int connectionState = getConnectionState();
+-
+-        switch (connectionState) {
+-            case BluetoothProfile.STATE_CONNECTED:
+-                if (!mIsConnected) {
+-                    // We are in the Bad Chromebook Place.  We can force a disconnect
+-                    // to try to recover.
+-                    Log.v(TAG, "Chromebook: We are in a very bad state; the controller shows as connected in the underlying Bluetooth layer, but we never received a callback.  Forcing a reconnect.");
+-                    mIsReconnecting = true;
+-                    mGatt.disconnect();
+-                    mGatt = connectGatt(false);
+-                    break;
+-                }
+-                else if (!isRegistered()) {
+-                    if (mGatt.getServices().size() > 0) {
+-                        Log.v(TAG, "Chromebook: We are connected to a controller, but never got our registration.  Trying to recover.");
+-                        probeService(this);
+-                    }
+-                    else {
+-                        Log.v(TAG, "Chromebook: We are connected to a controller, but never discovered services.  Trying to recover.");
++        try {
++            if (!mIsChromebook) {
++                // We only do this on Chromebooks, because otherwise it's really annoying to just attempt
++                // over and over.
++                return;
++            }
++
++            int connectionState = getConnectionState();
++
++            switch (connectionState) {
++                case BluetoothProfile.STATE_CONNECTED:
++                    if (!mIsConnected) {
++                        // We are in the Bad Chromebook Place.  We can force a disconnect
++                        // to try to recover.
++                        Log.v(TAG, "Chromebook: We are in a very bad state; the controller shows as connected in the underlying Bluetooth layer, but we never received a callback.  Forcing a reconnect.");
+                         mIsReconnecting = true;
+                         mGatt.disconnect();
+                         mGatt = connectGatt(false);
+                         break;
+                     }
+-                }
+-                else {
+-                    Log.v(TAG, "Chromebook: We are connected, and registered.  Everything's good!");
+-                    return;
+-                }
+-                break;
+-
+-            case BluetoothProfile.STATE_DISCONNECTED:
+-                Log.v(TAG, "Chromebook: We have either been disconnected, or the Chromebook BtGatt.ContextMap bug has bitten us.  Attempting a disconnect/reconnect, but we may not be able to recover.");
+-
++                    else if (!isRegistered()) {
++                        if (mGatt.getServices().size() > 0) {
++                            Log.v(TAG, "Chromebook: We are connected to a controller, but never got our registration.  Trying to recover.");
++                            probeService(this);
++                        }
++                        else {
++                            Log.v(TAG, "Chromebook: We are connected to a controller, but never discovered services.  Trying to recover.");
++                            mIsReconnecting = true;
++                            mGatt.disconnect();
++                            mGatt = connectGatt(false);
++                            break;
++                        }
++                    }
++                    else {
++                        Log.v(TAG, "Chromebook: We are connected, and registered.  Everything's good!");
++                        return;
++                    }
++                    break;
++
++                case BluetoothProfile.STATE_DISCONNECTED:
++                    Log.v(TAG, "Chromebook: We have either been disconnected, or the Chromebook BtGatt.ContextMap bug has bitten us.  Attempting a disconnect/reconnect, but we may not be able to recover.");
++
++                    mIsReconnecting = true;
++                    mGatt.disconnect();
++                    mGatt = connectGatt(false);
++                    break;
++
++                case BluetoothProfile.STATE_CONNECTING:
++                    Log.v(TAG, "Chromebook: We're still trying to connect.  Waiting a bit longer.");
++                    break;
++            }
++
++            final HIDDeviceBLESteamController finalThis = this;
++            mHandler.postDelayed(new Runnable() {
++                @Override
++                public void run() {
++                    finalThis.checkConnectionForChromebookIssue();
++                }
++            }, CHROMEBOOK_CONNECTION_CHECK_INTERVAL);
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return;
++        }
++    }
++
++    private boolean isRegistered() {
++        return mIsRegistered;
++    }
++
++    private void setRegistered() {
++        mIsRegistered = true;
++    }
++
++    private boolean probeService(HIDDeviceBLESteamController controller) {
++        try {
++
++            if (isRegistered()) {
++                return true;
++            }
++
++            if (!mIsConnected) {
++                return false;
++            }
++
++            Log.v(TAG, "probeService controller=" + controller);
++
++            for (BluetoothGattService service : mGatt.getServices()) {
++                if (service.getUuid().equals(steamControllerService)) {
++                    Log.v(TAG, "Found Valve steam controller service " + service.getUuid());
++
++                    for (BluetoothGattCharacteristic chr : service.getCharacteristics()) {
++                        if (chr.getUuid().equals(inputCharacteristic)) {
++                            Log.v(TAG, "Found input characteristic");
++                            // Start notifications
++                            BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
++                            if (cccd != null) {
++                                enableNotification(chr.getUuid());
++                            }
++                        }
++                    }
++                    return true;
++                }
++            }
++
++            if ((mGatt.getServices().size() == 0) && mIsChromebook && !mIsReconnecting) {
++                Log.e(TAG, "Chromebook: Discovered services were empty; this almost certainly means the BtGatt.ContextMap bug has bitten us.");
++                mIsConnected = false;
+                 mIsReconnecting = true;
+                 mGatt.disconnect();
+                 mGatt = connectGatt(false);
+-                break;
+-
+-            case BluetoothProfile.STATE_CONNECTING:
+-                Log.v(TAG, "Chromebook: We're still trying to connect.  Waiting a bit longer.");
+-                break;
+-        }
+-
+-        final HIDDeviceBLESteamController finalThis = this;
+-        mHandler.postDelayed(new Runnable() {
+-            @Override
+-            public void run() {
+-                finalThis.checkConnectionForChromebookIssue();
+-            }
+-        }, CHROMEBOOK_CONNECTION_CHECK_INTERVAL);
+-    }
+-
+-    private boolean isRegistered() {
+-        return mIsRegistered;
+-    }
+-
+-    private void setRegistered() {
+-        mIsRegistered = true;
+-    }
+-
+-    private boolean probeService(HIDDeviceBLESteamController controller) {
+-
+-        if (isRegistered()) {
+-            return true;
+-        }
+-
+-        if (!mIsConnected) {
++            }
++
+             return false;
+-        }
+-
+-        Log.v(TAG, "probeService controller=" + controller);
+-
+-        for (BluetoothGattService service : mGatt.getServices()) {
+-            if (service.getUuid().equals(steamControllerService)) {
+-                Log.v(TAG, "Found Valve steam controller service " + service.getUuid());
+-
+-                for (BluetoothGattCharacteristic chr : service.getCharacteristics()) {
+-                    if (chr.getUuid().equals(inputCharacteristic)) {
+-                        Log.v(TAG, "Found input characteristic");
+-                        // Start notifications
+-                        BluetoothGattDescriptor cccd = chr.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"));
+-                        if (cccd != null) {
+-                            enableNotification(chr.getUuid());
+-                        }
+-                    }
+-                }
+-                return true;
+-            }
+-        }
+-
+-        if ((mGatt.getServices().size() == 0) && mIsChromebook && !mIsReconnecting) {
+-            Log.e(TAG, "Chromebook: Discovered services were empty; this almost certainly means the BtGatt.ContextMap bug has bitten us.");
+-            mIsConnected = false;
+-            mIsReconnecting = true;
+-            mGatt.disconnect();
+-            mGatt = connectGatt(false);
+-        }
+-
+-        return false;
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return false;
++        }
+     }
+ 
+     //////////////////////////////////////////////////////////////////////////////////////////////////////
+@@ -425,7 +455,12 @@
+                 mHandler.post(new Runnable() {
+                     @Override
+                     public void run() {
+-                        mGatt.discoverServices();
++                        try {
++                            mGatt.discoverServices();
++                        } catch (SecurityException denied) {
++                            Log.w(TAG, "Bluetooth access denied", denied);
++                            return;
++                        }
+                     }
+                 });
+             }
+@@ -438,18 +473,23 @@
+     }
+ 
+     public void onServicesDiscovered(BluetoothGatt gatt, int status) {
+-        //Log.v(TAG, "onServicesDiscovered status=" + status);
+-        if (status == 0) {
+-            if (gatt.getServices().size() == 0) {
+-                Log.v(TAG, "onServicesDiscovered returned zero services; something has gone horribly wrong down in Android's Bluetooth stack.");
+-                mIsReconnecting = true;
+-                mIsConnected = false;
+-                gatt.disconnect();
+-                mGatt = connectGatt(false);
+-            }
+-            else {
+-                probeService(this);
+-            }
++        try {
++            //Log.v(TAG, "onServicesDiscovered status=" + status);
++            if (status == 0) {
++                if (gatt.getServices().size() == 0) {
++                    Log.v(TAG, "onServicesDiscovered returned zero services; something has gone horribly wrong down in Android's Bluetooth stack.");
++                    mIsReconnecting = true;
++                    mIsConnected = false;
++                    gatt.disconnect();
++                    mGatt = connectGatt(false);
++                }
++                else {
++                    probeService(this);
++                }
++            }
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return;
+         }
+     }
+ 
+@@ -492,20 +532,25 @@
+     }
+ 
+     public void onDescriptorWrite(BluetoothGatt gatt, BluetoothGattDescriptor descriptor, int status) {
+-        BluetoothGattCharacteristic chr = descriptor.getCharacteristic();
+-        //Log.v(TAG, "onDescriptorWrite status=" + status + " uuid=" + chr.getUuid() + " descriptor=" + descriptor.getUuid());
+-
+-        if (chr.getUuid().equals(inputCharacteristic)) {
+-            boolean hasWrittenInputDescriptor = true;
+-            BluetoothGattCharacteristic reportChr = chr.getService().getCharacteristic(reportCharacteristic);
+-            if (reportChr != null) {
+-                Log.v(TAG, "Writing report characteristic to enter valve mode");
+-                reportChr.setValue(enterValveMode);
+-                gatt.writeCharacteristic(reportChr);
+-            }
+-        }
+-
+-        finishCurrentGattOperation();
++        try {
++            BluetoothGattCharacteristic chr = descriptor.getCharacteristic();
++            //Log.v(TAG, "onDescriptorWrite status=" + status + " uuid=" + chr.getUuid() + " descriptor=" + descriptor.getUuid());
++
++            if (chr.getUuid().equals(inputCharacteristic)) {
++                boolean hasWrittenInputDescriptor = true;
++                BluetoothGattCharacteristic reportChr = chr.getService().getCharacteristic(reportCharacteristic);
++                if (reportChr != null) {
++                    Log.v(TAG, "Writing report characteristic to enter valve mode");
++                    reportChr.setValue(enterValveMode);
++                    gatt.writeCharacteristic(reportChr);
++                }
++            }
++
++            finishCurrentGattOperation();
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return;
++        }
+     }
+ 
+     public void onReliableWriteCompleted(BluetoothGatt gatt, int status) {
+@@ -627,18 +672,23 @@
+ 
+     @Override
+     public void shutdown() {
+-        close();
+-
+-        BluetoothGatt g = mGatt;
+-        if (g != null) {
+-            g.disconnect();
+-            g.close();
+-            mGatt = null;
+-        }
+-        mManager = null;
+-        mIsRegistered = false;
+-        mIsConnected = false;
+-        mOperations.clear();
++        try {
++            close();
++
++            BluetoothGatt g = mGatt;
++            if (g != null) {
++                g.disconnect();
++                g.close();
++                mGatt = null;
++            }
++            mManager = null;
++            mIsRegistered = false;
++            mIsConnected = false;
++            mOperations.clear();
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
++            return;
++        }
+     }
+ 
+ }
+diff --git a/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java b/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
+--- a/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
++++ b/android-project/app/src/main/java/org/libsdl/app/HIDDeviceManager.java
+@@ -139,6 +139,7 @@
+         return result;
+     }
+ 
++    @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
+     private void initializeUSB() {
+         mUsbManager = (UsbManager)mContext.getSystemService(Context.USB_SERVICE);
+         if (mUsbManager == null) {
+@@ -440,42 +441,47 @@
+     // This function provides a sort of dummy version of that, watching for changes in the
+     // connected devices and attempting to add controllers as things change.
+     public void chromebookConnectionHandler() {
+-        if (!mIsChromebook) {
++        try {
++            if (!mIsChromebook) {
++                return;
++            }
++
++            ArrayList<BluetoothDevice> disconnected = new ArrayList<BluetoothDevice>();
++            ArrayList<BluetoothDevice> connected = new ArrayList<BluetoothDevice>();
++
++            List<BluetoothDevice> currentConnected = mBluetoothManager.getConnectedDevices(BluetoothProfile.GATT);
++
++            for (BluetoothDevice bluetoothDevice : currentConnected) {
++                if (!mLastBluetoothDevices.contains(bluetoothDevice)) {
++                    connected.add(bluetoothDevice);
++                }
++            }
++            for (BluetoothDevice bluetoothDevice : mLastBluetoothDevices) {
++                if (!currentConnected.contains(bluetoothDevice)) {
++                    disconnected.add(bluetoothDevice);
++                }
++            }
++
++            mLastBluetoothDevices = currentConnected;
++
++            for (BluetoothDevice bluetoothDevice : disconnected) {
++                disconnectBluetoothDevice(bluetoothDevice);
++            }
++            for (BluetoothDevice bluetoothDevice : connected) {
++                connectBluetoothDevice(bluetoothDevice);
++            }
++
++            final HIDDeviceManager finalThis = this;
++            mHandler.postDelayed(new Runnable() {
++                @Override
++                public void run() {
++                    finalThis.chromebookConnectionHandler();
++                }
++            }, 10000);
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
+             return;
+         }
+-
+-        ArrayList<BluetoothDevice> disconnected = new ArrayList<BluetoothDevice>();
+-        ArrayList<BluetoothDevice> connected = new ArrayList<BluetoothDevice>();
+-
+-        List<BluetoothDevice> currentConnected = mBluetoothManager.getConnectedDevices(BluetoothProfile.GATT);
+-
+-        for (BluetoothDevice bluetoothDevice : currentConnected) {
+-            if (!mLastBluetoothDevices.contains(bluetoothDevice)) {
+-                connected.add(bluetoothDevice);
+-            }
+-        }
+-        for (BluetoothDevice bluetoothDevice : mLastBluetoothDevices) {
+-            if (!currentConnected.contains(bluetoothDevice)) {
+-                disconnected.add(bluetoothDevice);
+-            }
+-        }
+-
+-        mLastBluetoothDevices = currentConnected;
+-
+-        for (BluetoothDevice bluetoothDevice : disconnected) {
+-            disconnectBluetoothDevice(bluetoothDevice);
+-        }
+-        for (BluetoothDevice bluetoothDevice : connected) {
+-            connectBluetoothDevice(bluetoothDevice);
+-        }
+-
+-        final HIDDeviceManager finalThis = this;
+-        mHandler.postDelayed(new Runnable() {
+-            @Override
+-            public void run() {
+-                finalThis.chromebookConnectionHandler();
+-            }
+-        }, 10000);
+     }
+ 
+     public boolean connectBluetoothDevice(BluetoothDevice bluetoothDevice) {
+@@ -514,17 +520,22 @@
+     }
+ 
+     public boolean isSteamController(BluetoothDevice bluetoothDevice) {
+-        // Sanity check.  If you pass in a null device, by definition it is never a Steam Controller.
+-        if (bluetoothDevice == null) {
++        try {
++            // Sanity check.  If you pass in a null device, by definition it is never a Steam Controller.
++            if (bluetoothDevice == null) {
++                return false;
++            }
++
++            // If the device has no local name, we really don't want to try an equality check against it.
++            if (bluetoothDevice.getName() == null) {
++                return false;
++            }
++
++            return bluetoothDevice.getName().equals("SteamController") && ((bluetoothDevice.getType() & BluetoothDevice.DEVICE_TYPE_LE) != 0);
++        } catch (SecurityException denied) {
++            Log.w(TAG, "Bluetooth access denied", denied);
+             return false;
+         }
+-
+-        // If the device has no local name, we really don't want to try an equality check against it.
+-        if (bluetoothDevice.getName() == null) {
+-            return false;
+-        }
+-
+-        return bluetoothDevice.getName().equals("SteamController") && ((bluetoothDevice.getType() & BluetoothDevice.DEVICE_TYPE_LE) != 0);
+     }
+ 
+     private void close() {
+diff --git a/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java b/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
+--- a/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
++++ b/android-project/app/src/main/java/org/libsdl/app/SDLControllerManager.java
+@@ -489,6 +489,7 @@
+     }
+ }
+ 
++@android.annotation.TargetApi(31)
+ class SDLHapticHandler_API31 extends SDLHapticHandler {
+     @Override
+     public void run(int device_id, float intensity, int length) {
