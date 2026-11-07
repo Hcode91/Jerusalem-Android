@@ -10,6 +10,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 import wave
+import uuid
 
 PACKAGE = 'org.jerusalem.engine'
 OUTPUT = Path('smoke-output')
@@ -17,6 +18,31 @@ OUTPUT = Path('smoke-output')
 
 def adb(*args, **kwargs):
     return subprocess.run(['adb', *args], check=True, stdout=subprocess.PIPE, timeout=90, **kwargs).stdout
+
+
+_log_marker = None
+
+
+def _log_buffer():
+    return adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')
+
+
+def begin_log_phase():
+    """Separate assertions without depending on destructive logcat -c support."""
+    global _log_marker
+    marker = 'JERUSALEM_SMOKE_PHASE_'+uuid.uuid4().hex
+    adb('shell', 'log', '-p', 'i', '-t', 'Jerusalem', marker)
+    _log_marker = marker.encode('ascii')
+    wait_for(lambda: _log_marker in _log_buffer(), 'Emulator did not record the smoke log phase marker', seconds=10)
+
+
+def game_logs():
+    """Never let older success/error messages satisfy a later phase's checks."""
+    if _log_marker is None:
+        raise RuntimeError('Smoke log phase has not started')
+    logs = _log_buffer()
+    _, found, tail = logs.rpartition(_log_marker)
+    return tail if found else b''
 
 
 def wait_for(predicate, message, seconds=30):
@@ -335,9 +361,9 @@ def main():
     OUTPUT.mkdir(exist_ok=True)
     try:
         adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk')
-        adb('logcat', '-c')
+        begin_log_phase()
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
-        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native engine did not become ready')
+        wait_for(lambda: b'Ready.' in game_logs(), 'Native engine did not become ready')
         wait_for(lambda: b'New Game' in current_ui(), 'Main menu did not appear on a fresh launch')
         (OUTPUT / 'main-menu.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_menu('Developer Tools')
@@ -368,46 +394,46 @@ def main():
         click_scrolling('Browse assets')
         click('synthetic.bmp')
         click('Close')
-        wait_for(lambda: b'BMP: 2 x 2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native BMP rendering path did not complete')
+        wait_for(lambda: b'BMP: 2 x 2' in game_logs(), 'Native BMP rendering path did not complete')
         adb('shell', 'pidof', PACKAGE)
         (OUTPUT / 'synthetic-image.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('Browse assets')
         click('synthetic-labels.ini')
         wait_for(lambda: b'Synthetic label' in current_ui(), 'Decoded localization text was not displayed')
         click('Close')
-        wait_for(lambda: b'Localization:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Localization:' in game_logs(),
                  'Native view did not use the localization-aware summary')
         (OUTPUT / 'text-labels.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('Browse assets')
         click('synthetic-audio.wav')
         # Selecting a WAV must leave the main window focused, without a report modal.
-        wait_for(lambda: b'Playing audio: synthetic-audio.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Playing audio: synthetic-audio.wav' in game_logs(),
                  'Selecting a PCM WAV did not start the native audio stream')
-        wait_for(lambda: b'Audio buffer drained: synthetic-audio.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Audio buffer drained: synthetic-audio.wav' in game_logs(),
                  'The native audio output device did not consume the PCM stream')
         click_scrolling('Play audio')
-        wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'Playing audio: synthetic-audio.wav') >= 2,
+        wait_for(lambda: game_logs().count(b'Playing audio: synthetic-audio.wav') >= 2,
                  'Play audio did not replay the selected sound')
-        logs = adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')
+        logs = game_logs()
         if b'driver=dummy' in logs or b'Audio output: driver=' not in logs:
             raise RuntimeError('Audio smoke check did not use an Android output backend')
         (OUTPUT / 'audio-playback.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         for name in compressed_audio_fixtures():
             click_scrolling('Browse assets')
             click(name)
-            wait_for(lambda: ('Playing audio: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+            wait_for(lambda: ('Playing audio: ' + name).encode() in game_logs(),
                      f'{name} did not decode and start playing')
-            wait_for(lambda: ('Audio buffer drained: ' + name).encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+            wait_for(lambda: ('Audio buffer drained: ' + name).encode() in game_logs(),
                      f'{name} decoded output did not drain')
         click_scrolling('Browse assets')
         click('synthetic-node.aqc')
         click('Close')
-        wait_for(lambda: b'AQC static node image: 8 x 4' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'AQC static node image: 8 x 4' in game_logs(),
                  'Native AQC decoding/display path did not complete')
-        wait_for(lambda: b'Panorama frame:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Panorama frame:' in game_logs(),
                  'AQC camera frame was not rendered')
         (OUTPUT / 'aqc-panorama.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        before = camera_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))[-1][0]
+        before = camera_states(game_logs())[-1][0]
         # The emulator's default screen is 1080x1920. Use its reported dimensions instead.
         size = adb('shell', 'wm', 'size').decode()
         dimensions = re.findall(r'(\d+)x(\d+)', size)
@@ -416,14 +442,14 @@ def main():
         width, height = map(int, dimensions[-1])
         adb('shell', 'input', 'swipe', str(width // 3), str(height // 2), str(2 * width // 3), str(height // 2), '350')
         wait_for(lambda: any(abs((yaw-before+180)%360-180)>0.1 for yaw, _, _ in
-                             camera_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
+                             camera_states(game_logs())),
                  'Dragging did not change the panorama camera yaw')
         click_scrolling('Preview animation')
-        wait_for(lambda: len(set(preview_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))))>=2,
+        wait_for(lambda: len(set(preview_states(game_logs())))>=2,
                  'Original-format preview did not advance between synthetic frames')
         (OUTPUT / 'aqc-animation-preview.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('Preview animation')
-        wait_for(lambda: b'Animation preview off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Animation preview off.' in game_logs(),
                  'Animation preview did not switch off')
         # Add traversal fixtures after browser checks so earlier file lists remain stable.
         # These records and images are synthetic; no original executable is used in CI.
@@ -446,44 +472,44 @@ def main():
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}.wav'", input=sound.getvalue())
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=model.encode())
         click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal: SYNTH_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 traversal: SYNTH_A.' in game_logs(),
                  'Traversal mode did not load the initial synthetic scene')
-        wait_for(lambda: b'Scene audio active: SYNTH_LOOP.wav volume=80' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S') and
-                 b'Scene audio active: SYNTH_SECOND.wav volume=50' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Scene audio active: SYNTH_LOOP.wav volume=80' in game_logs() and
+                 b'Scene audio active: SYNTH_SECOND.wav volume=50' in game_logs(),
                  'Both synthetic ambient voices did not start')
-        wait_for(lambda: len(re.findall(rb'Scene audio loop: SYNTH_LOOP.wav wraps=', adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')))>=3,
+        wait_for(lambda: len(re.findall(rb'Scene audio loop: SYNTH_LOOP.wav wraps=', game_logs()))>=3,
                  'Ambient stream did not continue refilling beyond initial queue')
         adb('shell', 'input', 'keyevent', 'KEYCODE_HOME')
-        wait_for(lambda: b'Scene audio paused' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Scene audio paused' in game_logs(),
                  'Backgrounding did not pause scene audio')
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
-        wait_for(lambda: b'Scene audio resumed' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Scene audio resumed' in game_logs(),
                  'Returning to the app did not resume scene audio')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'A01 traversal: SYNTH_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 traversal: SYNTH_B.' in game_logs(),
                  'Tapping an enabled exit did not change scene')
-        wait_for(lambda: b'Scene audio active: SYNTH_LOOP.wav volume=55' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Scene audio active: SYNTH_LOOP.wav volume=55' in game_logs(),
                  'Scene transition did not update the retained ambient voice volume')
-        logs = adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')
+        logs = game_logs()
         if logs.count(b'Scene audio opened: SYNTH_LOOP.wav') != 1 or b'Scene audio closed: SYNTH_SECOND.wav' not in logs:
             raise RuntimeError('Scene transition restarted a retained track or kept an unused voice')
 
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Collected: Synthetic pickup [10]' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Collected: Synthetic pickup [10]' in game_logs(),
                  'Item hotspot did not take priority over the overlapping puzzle action')
-        wait_for(lambda: b'Pickup state: item=10 counter=50 value=1 inventory=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Pickup state: item=10 counter=50 value=1 inventory=1' in game_logs(),
                  'Pickup did not update the native variable and inventory')
         click_scrolling('Inventory')
         wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic pickup' in current_ui(),
                  'Inventory dialog did not display the collected original-format item')
         click('Close')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in game_logs(),
                  'Disabled return route or puzzle boundary was not respected')
         click_scrolling('Save checkpoint')
-        wait_for(lambda: any(row[0] == 'save' for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
+        wait_for(lambda: any(row[0] == 'save' for row in checkpoint_states(game_logs())),
                  'Native checkpoint was not saved')
-        saved = [row for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')) if row[0] == 'save'][-1]
+        saved = [row for row in checkpoint_states(game_logs()) if row[0] == 'save'][-1]
         checkpoint = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
         if checkpoint[:8] != b'JRNSAVE\0' or not 68 <= len(checkpoint) <= 132:
             raise RuntimeError('Checkpoint is missing or not the bounded native metadata format')
@@ -492,9 +518,9 @@ def main():
         # A real process restart proves persistence beyond in-memory state.
         (OUTPUT / 'before-checkpoint-restart-logcat.txt').write_bytes(adb('logcat', '-d'))
         adb('shell', 'am', 'force-stop', PACKAGE)
-        adb('logcat', '-c')
+        begin_log_phase()
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
-        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Ready.' in game_logs(),
                  'Native app did not restart for checkpoint restoration')
         click_menu('Settings')
         caption_nodes = [node for node in ET.fromstring(current_ui()).iter('node') if node.get('text') == 'Show subtitles']
@@ -502,9 +528,9 @@ def main():
             raise RuntimeError('Subtitle setting did not persist across process restart')
         click('Show subtitles');click('Apply');click_menu('Developer Tools')
         click_scrolling('Load checkpoint')
-        wait_for(lambda: any(row[0] == 'load' for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
+        wait_for(lambda: any(row[0] == 'load' for row in checkpoint_states(game_logs())),
                  'Native checkpoint did not load after process restart')
-        loaded = [row for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')) if row[0] == 'load'][-1]
+        loaded = [row for row in checkpoint_states(game_logs()) if row[0] == 'load'][-1]
         if loaded[1:] != saved[1:]:
             raise RuntimeError(f'Checkpoint scene/camera/inventory changed: {saved} vs {loaded}')
         click_scrolling('Inventory')
@@ -512,12 +538,12 @@ def main():
                  'Restored inventory did not contain the saved pickup')
         click('Close')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in game_logs(),
                  'Restored picked item still intercepted the puzzle hotspot')
         # Invalid load must preserve the currently restored session.
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-preview.jrs'", input=b'invalid checkpoint')
         click_scrolling('Load checkpoint')
-        wait_for(lambda: b'Checkpoint load failed:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Checkpoint load failed:' in game_logs(),
                  'Corrupt checkpoint did not produce a clear load error')
         click_scrolling('Inventory')
         wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic pickup' in current_ui(),
@@ -526,52 +552,52 @@ def main():
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-preview.jrs'", input=checkpoint)
         # A separate V4 synthetic session exercises accessible ingredient selection and persistence.
         click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 traversal off.' in game_logs(),
                  'Previous navigation session did not stop before V4 setup')
         upgraded = model.replace('NAV_V3', 'NAV_V4') + (
             'item 11 2 0 -750 3600 750 60 0 50 1 "Synthetic stone"\n'
             'item-channel 11 2 0\ncombine 10 11 20 "Synthetic sling"\n')
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=upgraded.encode())
-        adb('logcat', '-c')
+        begin_log_phase()
         click_scrolling('A01 navigation')
         # Navigation deliberately reopens the last viewed asset. The checkpoint above
         # restored SYNTH_B; toggling off resets interactions but retains that selection.
-        wait_for(lambda: b'A01 traversal: SYNTH_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 scene did not reopen the selected node')
+        wait_for(lambda: b'A01 traversal: SYNTH_B.' in game_logs(), 'V4 scene did not reopen the selected node')
         for expected in (b'Collected: Synthetic pickup [10]', b'Collected: Synthetic stone [11]'):
             adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-            wait_for(lambda: expected in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V4 traversal/pickup failed')
+            wait_for(lambda: expected in game_logs(), 'V4 traversal/pickup failed')
         click_scrolling('Inventory')
         click('Combine items')
         click('Synthetic stone')
         click('Synthetic pickup')
-        wait_for(lambda: b'Combination state: first=11 second=10 result=20 inventory=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Combination state: first=11 second=10 result=20 inventory=1' in game_logs(),
                  'Reverse-order combination did not consume ingredients and add result')
         click_scrolling('Inventory')
         wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic sling [20]' in current_ui(), 'Combination result missing from inventory')
         click('Close')
         click_scrolling('Save checkpoint')
-        wait_for(lambda: b'Checkpoint state: action=save' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination checkpoint not saved')
+        wait_for(lambda: b'Checkpoint state: action=save' in game_logs(), 'Combination checkpoint not saved')
         combined = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
         if len(combined) != 80 or struct.unpack_from('<I', combined, 12)[0] != 2 or struct.unpack_from('<III', combined, 64) != (10, 11, 0x80000014):
             raise RuntimeError('Combination checkpoint lacks the expected revision/action sequence')
         adb('shell', 'am', 'force-stop', PACKAGE)
-        adb('logcat', '-c')
+        begin_log_phase()
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
-        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination restart failed')
+        wait_for(lambda: b'Ready.' in game_logs(), 'Combination restart failed')
         click_menu('Developer Tools')
         click_scrolling('Load checkpoint')
-        wait_for(lambda: b'Checkpoint state: action=load' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination checkpoint did not reload')
+        wait_for(lambda: b'Checkpoint state: action=load' in game_logs(), 'Combination checkpoint did not reload')
         click_scrolling('Inventory')
         wait_for(lambda: b'Collected items: 1' in current_ui() and b'Synthetic sling [20]' in current_ui(), 'Reloaded result missing or ingredients returned')
         click('Close')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Puzzle interactions are not implemented; no route has been bypassed.' in game_logs(),
                  'Consumed ingredients became collectible again after loading')
         (OUTPUT / 'a01-traversal-synthetic.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 traversal off.' in game_logs(),
                  'Traversal preview did not switch off')
-        wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Scene audio closed: SYNTH_LOOP.wav' in game_logs(),
                  'Leaving traversal did not close ambient playback')
         # Palm + consuming character offer + revision-3 persistence, with original-free data.
         for name in ('STORY_A', 'STORY_B'):
@@ -586,31 +612,31 @@ def main():
                        'target 31 2 0 -750 3600 750 62 0 1 "Offer"\n'
                        'use 1 31 11 52 1 30 51 40 1 0 0 1\n')
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=story_model.encode())
-        adb('logcat', '-c')
+        begin_log_phase()
         click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal: STORY_A.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V5 story scene did not start')
+        wait_for(lambda: b'A01 traversal: STORY_A.' in game_logs(), 'V5 story scene did not start')
         for expected in (b'Collected: Story harness [10]', b'Collected: Story matting [11]', b'A01 traversal: STORY_B.', b'Collected: Story palm [12]'):
             adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-            wait_for(lambda: expected in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'V5 pickup/traversal sequence failed')
+            wait_for(lambda: expected in game_logs(), 'V5 pickup/traversal sequence failed')
         click_scrolling('Inventory'); click('Use item'); click('Story matting')
-        wait_for(lambda: b'Using Story matting.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Item-use selection did not reach native engine')
+        wait_for(lambda: b'Using Story matting.' in game_logs(), 'Item-use selection did not reach native engine')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Item use state: rule=1 target=31 item=11 consumed=1 inventory=2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Character offer did not consume matting')
+        wait_for(lambda: b'Item use state: rule=1 target=31 item=11 consumed=1 inventory=2' in game_logs(), 'Character offer did not consume matting')
         click_scrolling('Save checkpoint')
-        wait_for(lambda: b'Checkpoint state: action=save' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Character checkpoint was not saved')
+        wait_for(lambda: b'Checkpoint state: action=save' in game_logs(), 'Character checkpoint was not saved')
         story_checkpoint = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
         if len(story_checkpoint) != 84 or struct.unpack_from('<I', story_checkpoint, 12)[0] != 3 or struct.unpack_from('<4I', story_checkpoint, 64) != (10, 11, 12, 0x40000001):
             raise RuntimeError('Story checkpoint lost assignment/use action order')
-        adb('shell', 'am', 'force-stop', PACKAGE); adb('logcat', '-c')
+        adb('shell', 'am', 'force-stop', PACKAGE); begin_log_phase()
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
-        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story restart failed')
+        wait_for(lambda: b'Ready.' in game_logs(), 'Story restart failed')
         click_menu('Developer Tools')
         click_scrolling('Load checkpoint')
-        wait_for(lambda: b'Checkpoint state: action=load node=2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story checkpoint did not restore')
+        wait_for(lambda: b'Checkpoint state: action=load node=2' in game_logs(), 'Story checkpoint did not restore')
         click_scrolling('Inventory')
         wait_for(lambda: b'Collected items: 2' in current_ui() and b'Story palm' in current_ui() and b'Story matting' not in current_ui(), 'Story inventory did not restore consumption/palm')
         click('Close'); click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal off.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story session did not stop')
+        wait_for(lambda: b'A01 traversal off.' in game_logs(), 'Story session did not stop')
         # Same native item-use path starts generated speech and genuinely parsed DIA cues.
         voice_model = ('JERUSALEM_A01_NAV_V5\nnode 1 STORY_A 4\nnode 2 STORY_B 4\n'
                        'item 10 2 0 -750 3600 750 60 0 50 1 "Voice harness"\nitem-channel 10 2 0\n'
@@ -624,55 +650,55 @@ def main():
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/data/a01/sound/eng/SYNTH_SPEECH.WAC'", input=sound.getvalue())
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/data/a01/dia/eng/SYNTH_SPEECH.DIA'", input=b'0 Synthetic first\r\n400 Synthetic second\r\n1500 END\r\n')
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/a01-navigation.tsv'", input=voice_model.encode())
-        adb('logcat', '-c'); click_scrolling('A01 navigation')
-        wait_for(lambda: b'A01 traversal: STORY_B.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Voice scene did not retain selected node')
+        begin_log_phase(); click_scrolling('A01 navigation')
+        wait_for(lambda: b'A01 traversal: STORY_B.' in game_logs(), 'Voice scene did not retain selected node')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Collected: Voice harness [10]' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Voice ingredient missing')
+        wait_for(lambda: b'Collected: Voice harness [10]' in game_logs(), 'Voice ingredient missing')
         click_scrolling('Inventory'); click('Use item'); click('Voice harness')
-        wait_for(lambda: b'Using Voice harness.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Voice selection failed')
+        wait_for(lambda: b'Using Voice harness.' in game_logs(), 'Voice selection failed')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'Dialogue started: id=60 stem=SYNTH_SPEECH' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Dialogue did not resolve/play audio')
-        wait_for(lambda: b'text=Synthetic second' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'DIA timeline did not advance')
+        wait_for(lambda: b'Dialogue started: id=60 stem=SYNTH_SPEECH' in game_logs(), 'Dialogue did not resolve/play audio')
+        wait_for(lambda: b'text=Synthetic second' in game_logs(), 'DIA timeline did not advance')
         click_scrolling('A01 navigation')
         # Movie playback has no report dialog and uses header timing plus stereo PCM.
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-movie.CI2'", input=synthetic_cinema(100))
-        adb('logcat', '-c'); click_scrolling('Browse assets'); click_list_item('synthetic-movie.CI2')
-        wait_for(lambda: b'Cinema frame: index=1' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native cinema preview did not advance')
-        wait_for(lambda: b'Cinema preview decoded 100 frames.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Cinema did not reach EOF at its declared frame count')
-        wait_for(lambda: b'Audio buffer drained: synthetic-movie.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Movie PCM did not reach SDL output')
+        begin_log_phase(); click_scrolling('Browse assets'); click_list_item('synthetic-movie.CI2')
+        wait_for(lambda: b'Cinema frame: index=1' in game_logs(), 'Native cinema preview did not advance')
+        wait_for(lambda: b'Cinema preview decoded 100 frames.' in game_logs(), 'Cinema did not reach EOF at its declared frame count')
+        wait_for(lambda: b'Audio buffer drained: synthetic-movie.CI2' in game_logs(), 'Movie PCM did not reach SDL output')
         # Match AN004/AN007C: one preloaded soundtrack followed by valid zero-byte Z chunks.
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/synthetic-preloaded.CI2'", input=synthetic_cinema(30, preload_audio=True))
-        adb('logcat', '-c'); click_scrolling('Browse assets'); click_list_item('synthetic-preloaded.CI2')
-        wait_for(lambda: b'Cinema preview decoded 30 frames.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Preloaded-soundtrack movie stopped on an empty PCM chunk')
-        wait_for(lambda: b'Audio buffer drained: synthetic-preloaded.CI2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Preloaded soundtrack did not reach SDL output')
-        if b'Cinema preview stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
+        begin_log_phase(); click_scrolling('Browse assets'); click_list_item('synthetic-preloaded.CI2')
+        wait_for(lambda: b'Cinema preview decoded 30 frames.' in game_logs(), 'Preloaded-soundtrack movie stopped on an empty PCM chunk')
+        wait_for(lambda: b'Audio buffer drained: synthetic-preloaded.CI2' in game_logs(), 'Preloaded soundtrack did not reach SDL output')
+        if b'Cinema preview stopped:' in game_logs():
             raise RuntimeError('Cinema emitted an error while playing the preloaded soundtrack fixture')
         # New story mode: actual movie/sound EOF callbacks, puzzle screens and first encounter.
         for name, content in synthetic_stage_fixture(bytes(bitmap), audio.getvalue()).items():
             parent = str(Path(name).parent)
             adb('shell', f'run-as {PACKAGE} mkdir -p files/game-data/{parent}')
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=content)
-        adb('logcat', '-c')
+        begin_log_phase()
         click_scrolling('Menu')
         click_menu('New Game')
-        wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in game_logs(),
                  'Opening movie / black puzzle / speech / second movie did not enter node 1')
         for node in range(2, 7):
             adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-            wait_for(lambda: f'A01 story cue: kind=0 id={1010100+node}'.encode() in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+            wait_for(lambda: f'A01 story cue: kind=0 id={1010100+node}'.encode() in game_logs(),
                      f'Story navigation did not reach node {node}')
-        wait_for(lambda: b'A01 story cue: kind=3 id=10002' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 story cue: kind=3 id=10002' in game_logs(),
                  'First encounter did not chain all three dialogue callbacks')
-        wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'A01 story cue: kind=0 id=1010106') >= 2,
+        wait_for(lambda: game_logs().count(b'A01 story cue: kind=0 id=1010106') >= 2,
                  'First encounter did not return to node 6 after speech finished')
         adb('shell', 'input', 'tap', str(width // 2), str(height // 2))
-        wait_for(lambda: b'A01 story cue: kind=1 id=10039' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 story cue: kind=1 id=10039' in game_logs(),
                  'Native puzzle exit did not invoke the warning scene')
-        wait_for(lambda: b'A01 story cue: kind=3 id=11005' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 story cue: kind=3 id=11005' in game_logs(),
                  'Puzzle speech did not complete into the second speaker')
-        wait_for(lambda: adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'A01 story cue: kind=0 id=1010105') >= 2,
+        wait_for(lambda: game_logs().count(b'A01 story cue: kind=0 id=1010105') >= 2,
                  'Puzzle speech did not return to the original arrival node')
-        if b'A01 story stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
+        if b'A01 story stopped:' in game_logs():
             raise RuntimeError('Story emitted a decoder, layout or playback error')
         (OUTPUT / 'synthetic-story-callbacks.png').write_bytes(adb('exec-out', 'screencap', '-p'))
         click_scrolling('Menu')
@@ -682,12 +708,12 @@ def main():
         if not story_save.startswith(b'JRNSTORY'):
             raise RuntimeError('Story slot contains the wrong save format')
         (OUTPUT / 'story-menu-save.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        adb('shell', 'am', 'force-stop', PACKAGE);adb('logcat', '-c')
+        adb('shell', 'am', 'force-stop', PACKAGE);begin_log_phase()
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
-        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Menu restart failed')
-        wait_for(lambda: b'Menu artwork: size=2x2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Imported menu artwork did not reach the Android menu')
+        wait_for(lambda: b'Ready.' in game_logs(), 'Menu restart failed')
+        wait_for(lambda: b'Menu artwork: size=2x2' in game_logs(), 'Imported menu artwork did not reach the Android menu')
         click_menu('Load Game');click('Manual save')
-        wait_for(lambda: b'Story session: action=load scene=1010105' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'Story session: action=load scene=1010105' in game_logs(),
                  'Manual story save did not restore after a process restart')
         wait_for(lambda: b'Inventory' in current_ui(), 'Load Game did not dismiss the menu')
         click_scrolling('Menu');click_menu('Continue')
@@ -700,17 +726,17 @@ def main():
         click_menu('Continue')
         wait_for(lambda: b'Inventory' in current_ui(), 'Failed load damaged the active session')
 
-        click_scrolling('Menu');adb('logcat', '-c');click_menu('New Game')
-        wait_for(lambda: b'Audio buffer drained: SYNTH_VOICE_10999' not in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S') and b'Dialogue started: id=10999' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        click_scrolling('Menu');begin_log_phase();click_menu('New Game')
+        wait_for(lambda: b'Audio buffer drained: SYNTH_VOICE_10999' not in game_logs() and b'Dialogue started: id=10999' in game_logs(),
                  'Opening speech did not become active for save testing')
         click_scrolling('Menu');click_menu('Save Game')
         wait_for(lambda: b'Game saved.' in current_ui(), 'Speech save did not finish')
         click_menu('Load Game');click('Manual save')
-        wait_for(lambda: re.search(rb'Story session: action=load scene=10045 media_ms=[1-9][0-9]*', adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')),
+        wait_for(lambda: re.search(rb'Story session: action=load scene=10045 media_ms=[1-9][0-9]*', game_logs()),
                  'Speech save did not restore its playback offset')
-        wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+        wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in game_logs(),
                  'Restored speech/movie sequence did not return to node 1')
-        if adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'A01 story cue: kind=2 id=2 ') != 1:
+        if game_logs().count(b'A01 story cue: kind=2 id=2 ') != 1:
             raise RuntimeError('Restored speech fired its completion callback more than once')
         (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, main menu and original-data setup entry, separate developer tools, manual story save/load across process restart, failed-load preservation, mid-speech resume with exactly one completion callback, story opening / encounter / puzzle callbacks using synthetic assets, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
