@@ -45,6 +45,29 @@ class SmokeHarnessTests(unittest.TestCase):
                 smoke.current_ui()
             self.assertEqual(adb.call_count, 2)
 
+    def test_game_logs_exclude_previous_phase_success_and_errors(self):
+        logs = b'Old Ready.\nOld Cinema error\nI Jerusalem: CURRENT_PHASE\nNew checkpoint saved\n'
+        with patch.object(smoke, '_log_marker', b'CURRENT_PHASE'), patch.object(smoke, 'adb', return_value=logs):
+            self.assertEqual(smoke.game_logs(), b'\nNew checkpoint saved\n')
+
+    def test_game_logs_missing_marker_never_reuses_old_success(self):
+        with patch.object(smoke, '_log_marker', b'CURRENT_PHASE'), patch.object(smoke, 'adb', return_value=b'Old Ready.\n'):
+            self.assertEqual(smoke.game_logs(), b'')
+
+    def test_game_logs_require_an_explicit_phase(self):
+        with patch.object(smoke, '_log_marker', None):
+            with self.assertRaisesRegex(RuntimeError, 'phase has not started'):
+                smoke.game_logs()
+
+    def test_log_phase_is_acknowledged_without_clearing_logcat(self):
+        marker = b'JERUSALEM_SMOKE_PHASE_fixed'
+        with patch.object(smoke, '_log_marker', None), patch.object(smoke.uuid, 'uuid4') as identifier, patch.object(smoke, 'adb', side_effect=[b'', b'I Jerusalem: '+marker+b'\n']) as adb:
+            identifier.return_value.hex = 'fixed'
+            smoke.begin_log_phase()
+            self.assertEqual(smoke._log_marker, marker)
+            self.assertEqual(adb.call_args_list[0].args, ('shell', 'log', '-p', 'i', '-t', 'Jerusalem', marker.decode()))
+            self.assertEqual(adb.call_args_list[1].args, ('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))
+
     def test_checkpoint_evidence_distinguishes_save_load_and_other_logs(self):
         logs = (b'Checkpoint state: action=save node=2 yaw=90.500000 pitch=-12.250000 fov=64.000000 inventory=1\n'
                 b'Other status\nCheckpoint state: action=load node=2 yaw=90.500000 pitch=-12.250000 fov=64.000000 inventory=1\n')
