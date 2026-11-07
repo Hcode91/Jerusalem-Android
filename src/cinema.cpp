@@ -27,6 +27,7 @@ CinemaDecoder::CinemaDecoder(std::vector<std::uint8_t> bytes):bytes_(std::move(b
   for(unsigned i=0;i<b.u8(27);++i){b.require(position_,16);CinemaSound s{static_cast<std::uint16_t>(b.u8(position_)+1U),b.u8(position_+1),b.u16(position_+2)};if((s.channels!=1 && s.channels!=2) || s.bits!=16 || s.rate<8000 || s.rate>48000)throw ParseError("unsupported CNM PCM configuration");info_.sounds.push_back(s);position_+=16;}
   b.require(position_,std::size_t(info_.frames)*8);position_+=std::size_t(info_.frames)*8;
   if(position_>=bytes_.size())throw ParseError("CNM chunk stream is missing");
+  initial_position_=position_;
   surface_.resize(std::size_t(w)*h*4,0);
   coverage_.resize(std::size_t(w)*h,0);
 }
@@ -108,6 +109,27 @@ Bitmap CinemaDecoder::image() const {
 Bitmap CinemaDecoder::sprite() const {
   auto result=image();
   for(unsigned y=0;y<info_.height;++y)for(unsigned x=0;x<info_.width;++x)result.rgba[(std::size_t(y)*info_.width+x)*4+3]=coverage_[std::size_t(info_.height-1-y)*info_.width+x];
+  return result;
+}
+Bitmap CinemaDecoder::alpha_image() const {
+  auto result=image();
+  for(unsigned y=0;y<info_.height;++y)for(unsigned x=0;x<info_.width;++x)result.rgba[(std::size_t(y)*info_.width+x)*4+3]=surface_[(std::size_t(info_.height-1-y)*info_.width+x)*4+3];
+  return result;
+}
+CinemaSeek seek_cinema(CinemaDecoder& decoder,std::uint64_t offset) {
+  if(!decoder.pristine())throw ParseError("movie resume requires a fresh decoder");
+  const auto& info=decoder.info();
+  if(!info.rate_word || info.rate_word>10000)throw ParseError("unsupported movie frame rate");
+  const auto duration=std::max(std::uint64_t(info.duration_ticks)*10,std::uint64_t(info.frames)*100000/info.rate_word);
+  if(offset>duration+1000)throw ParseError("saved movie position exceeds duration");
+  CinemaSeek result;result.position_ms=std::min(offset,duration);
+  if(!result.position_ms)return result;
+  const auto skip=info.sounds.empty()?0:result.position_ms*info.sounds.front().rate/1000*info.sounds.front().channels*2;
+  const auto desired=std::min<std::uint64_t>(info.frames,1+result.position_ms*info.rate_word/100000);std::uint64_t seen=0;
+  while(!decoder.done() && result.frames<desired){const auto e=decoder.next();
+    if(e.kind==CinemaEvent::Audio && e.channel==0){const auto begin=seen;seen+=e.pcm.size();if(seen>skip){const auto cut=skip>begin?skip-begin:0;if(result.pcm.size()+e.pcm.size()-cut>max_resource_bytes)throw ParseError("movie resume audio limit");result.pcm.insert(result.pcm.end(),e.pcm.begin()+static_cast<std::ptrdiff_t>(cut),e.pcm.end());}}
+    if(e.kind==CinemaEvent::Frame || e.kind==CinemaEvent::Dropped)++result.frames;
+  }
   return result;
 }
 }

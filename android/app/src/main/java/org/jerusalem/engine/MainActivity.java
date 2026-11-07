@@ -14,6 +14,11 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.CheckBox;
+import android.widget.SeekBar;
+import android.graphics.Bitmap;
 import org.libsdl.app.SDLActivity;
 import java.io.File;
 import java.io.ByteArrayOutputStream;
@@ -40,19 +45,46 @@ public class MainActivity extends SDLActivity {
     private File dataRoot;
     private String selectedAudioPath, selectedMoviePath, pendingAudioPath;
     private String lastNativeStatus = "";
-    private boolean importing;
+    private boolean importing, menuVisible=true, developerMode, menuArtLoading, menuArtLoaded, menuArtAttempted, engineReadySeen;
+    private boolean subtitlesEnabled=true;
+    private LinearLayout controlsPanel;
+    private View developerRow, gameRow;
+    private FrameLayout menuOverlay;
+    private ImageView menuImage;
+    private TextView menuStatus;
+    private Button continueButton, saveGameButton;
+    private String awaitedAction, previousResult="";
+    private final java.util.ArrayList<Button> menuButtons = new java.util.ArrayList<>();
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
     private final Runnable refreshStatus = new Runnable() {
         @Override public void run() {
             if (isFinishing() || isDestroyed() || mBrokenLibraries || status == null) return;
             if (!importing) {
                 String caption = nativeSubtitle();
-                subtitles.setText(caption); subtitles.setVisibility(caption.isEmpty() ? View.GONE : View.VISIBLE);
+                subtitles.setText(caption); subtitles.setVisibility(caption.isEmpty() || !subtitlesEnabled ? View.GONE : View.VISIBLE);
                 String message = nativeStatus();
                 if (!message.equals(lastNativeStatus)) {
+                    if (!engineReadySeen && message.startsWith("Ready")) {engineReadySeen = true;menuArtAttempted = false;}
                     lastNativeStatus = message;
                     status.setText(message);
                 }
+            }
+            if (menuOverlay != null) {
+                int flags = nativeGameFlags();
+                boolean saved = storyFile(false).isFile() || storyFile(true).isFile();
+                for (Button action : menuButtons) action.setEnabled(!importing && awaitedAction == null);
+                continueButton.setEnabled(!importing && awaitedAction == null && (((flags & 1) != 0 && (flags & 6) == 0) || saved));
+                saveGameButton.setEnabled(!importing && awaitedAction == null && (flags & 1) != 0 && (flags & 6) == 0);
+                if (awaitedAction != null) {
+                    String reply = nativeGameResult();
+                    if (!reply.equals(previousResult) && reply.contains(":" + awaitedAction + ":")) {
+                        boolean success = reply.endsWith(":ok");
+                        String action = awaitedAction; awaitedAction = null;
+                        menuStatus.setText(nativeStatus());
+                        if (success && !action.equals("save")) { developerMode = false; closeMenu(); }
+                    }
+                }
+                if (menuVisible && !menuArtLoading && !menuArtLoaded && !menuArtAttempted && lastNativeStatus.startsWith("Ready")) loadMenuArt();
             }
             statusHandler.postDelayed(this, 250);
         }
@@ -70,6 +102,13 @@ public class MainActivity extends SDLActivity {
     private static native String nativeSubtitle();
     private static native byte[] nativeExtractA01(byte[] program);
     private static native byte[] nativeExtractStage(byte[] program);
+    private static native void nativeMenuPaused(boolean paused);
+    private static native void nativeDeveloperMode(boolean enabled);
+    private static native int nativeGameFlags();
+    private static native String nativeGameResult();
+    private static native int[] nativeMenuArt();
+    private static native void nativeViewportBottom(int pixels);
+    private static native void nativeOptions(int volume, boolean markers);
 
     @Override protected String[] getLibraries() { return new String[] {"SDL3", "main"}; }
 
@@ -82,13 +121,16 @@ public class MainActivity extends SDLActivity {
             showText("Storage error", "Cannot create private game-data directory.");
             return;
         }
-        LinearLayout panel = new LinearLayout(this);
+        subtitlesEnabled = getPreferences(MODE_PRIVATE).getBoolean("subtitles", true);
+        nativeOptions(getPreferences(MODE_PRIVATE).getInt("volume", 100), getPreferences(MODE_PRIVATE).getBoolean("markers", true));
+        LinearLayout panel = new LinearLayout(this); controlsPanel = panel;
+        panel.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> { if (view.getVisibility() == View.VISIBLE) nativeViewportBottom(bottom-top); });
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setBackgroundColor(0xEE18222B);
         panel.setPadding(12, 4, 12, 4);
         status = new TextView(this);
         status.setTextColor(0xFFFFFFFF);
-        status.setText("Import original data, then choose an asset. This build is an inspector; gameplay is not implemented.");
+        status.setText("Import original game data to begin.");
         subtitles = new TextView(this);subtitles.setTextSize(18);subtitles.setTextColor(0xFFFFFFFF);subtitles.setPadding(16, 8, 16, 8);subtitles.setVisibility(View.GONE);panel.addView(subtitles);
         panel.addView(status);
         LinearLayout buttons = new LinearLayout(this);
@@ -98,6 +140,7 @@ public class MainActivity extends SDLActivity {
             startActivityForResult(intent, PICK_TREE);
         });
         browseButton = button("Browse assets", v -> browse(dataRoot));
+        buttons.addView(button("Menu", v -> openMenu()));
         buttons.addView(importButton); buttons.addView(browseButton);
         buttons.addView(button("Play audio", v -> {
             if (selectedAudioPath == null) showText("Audio", "Choose a supported PCM WAV, WAC or WAS from Browse assets first.");
@@ -126,17 +169,126 @@ public class MainActivity extends SDLActivity {
         buttons.addView(button("Stop audio", v -> nativeCommand(4)));
         buttons.addView(button("Status", v -> showText("Native status", nativeStatus())));
         android.widget.HorizontalScrollView row = new android.widget.HorizontalScrollView(this);
-        row.addView(buttons); panel.addView(row);
+        row.addView(buttons); panel.addView(row); developerRow = row;
+        LinearLayout playButtons = new LinearLayout(this);
+        playButtons.addView(button("Menu", v -> openMenu()));
+        playButtons.addView(button("Inventory", v -> showInventory()));
+        panel.addView(playButtons); gameRow = playButtons; gameRow.setVisibility(View.GONE);
         android.widget.RelativeLayout.LayoutParams layout = new android.widget.RelativeLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         layout.addRule(android.widget.RelativeLayout.ALIGN_PARENT_BOTTOM);
         mLayout.addView(panel, layout);
+        createMenu();openMenu();
+    }
+
+    private File storyFile(boolean automatic) {
+        return new File(getFilesDir(), automatic ? "native-saves/a01-auto.jrs" : "native-saves/a01-story.jrs");
+    }
+
+    private void createMenu() {
+        menuOverlay = new FrameLayout(this);menuOverlay.setBackgroundColor(0xFF21150F);
+        menuImage = new ImageView(this);menuImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        menuImage.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        menuOverlay.addView(menuImage, new FrameLayout.LayoutParams(-1, -1));
+        // The original bitmap has baked English labels. Cover its right side with
+        // accessible native controls so unavailable original options never look active.
+        LinearLayout columns = new LinearLayout(this);
+        View decoration = new View(this); columns.addView(decoration, new LinearLayout.LayoutParams(0, -1, 0.38f));
+        ScrollView scroll = new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(0xFF21150F);
+        LinearLayout entries = new LinearLayout(this);entries.setOrientation(LinearLayout.VERTICAL);entries.setPadding(16, 20, 16, 16);
+        TextView title = new TextView(this);title.setText("JERUSALEM");title.setTextColor(0xFFFFE3AE);title.setTextSize(25);entries.addView(title);
+        TextView subtitle = new TextView(this);subtitle.setText("The Three Roads to the Holy Land");subtitle.setTextColor(0xFFE7D2B5);entries.addView(subtitle);
+        menuStatus = new TextView(this);menuStatus.setText("Import your original game data, then set up the game to begin.");menuStatus.setTextColor(0xFFFFFFFF);menuStatus.setPadding(0, 12, 0, 12);entries.addView(menuStatus);
+        entries.addView(button("New Game", v -> launchGameAction(11, "new")));
+        continueButton = button("Continue", v -> {
+            int flags = nativeGameFlags();
+            if ((flags & 1) != 0 && (flags & 6) == 0) { developerMode = false;closeMenu(); }
+            else launchGameAction(14, "load");
+        });continueButton.setEnabled(false);entries.addView(continueButton);
+        entries.addView(button("Load Game", v -> chooseStorySave()));
+        saveGameButton = button("Save Game", v -> launchGameAction(12, "save"));saveGameButton.setEnabled(false);entries.addView(saveGameButton);
+        entries.addView(button("Settings", v -> showSettings()));
+        entries.addView(button("Import game data", v -> { if (!importing && awaitedAction == null) importButton.performClick(); }));
+        entries.addView(button("Set up game", v -> { if (!importing && awaitedAction == null) chooseNavigationSource(); }));
+        entries.addView(button("Developer Tools", v -> { developerMode = true;closeMenu(); }));
+        entries.addView(button("Quit", v -> finish()));
+        for (int i = 0; i < entries.getChildCount(); ++i) if (entries.getChildAt(i) instanceof Button) menuButtons.add((Button) entries.getChildAt(i));
+        scroll.addView(entries);columns.addView(scroll, new LinearLayout.LayoutParams(0, -1, 0.62f));
+        menuOverlay.addView(columns, new FrameLayout.LayoutParams(-1, -1));
+        android.widget.RelativeLayout.LayoutParams params = new android.widget.RelativeLayout.LayoutParams(-1, -1);
+        mLayout.addView(menuOverlay, params);
+    }
+
+    private void openMenu() {
+        if (menuOverlay == null) return;
+        menuVisible = true;nativeMenuPaused(true);nativeCommand(15);
+        if (awaitedAction == null) {
+            int flags = nativeGameFlags();
+            menuStatus.setText((flags & 6) != 0 ? nativeStatus() : (flags & 1) != 0 ? "Game paused. Continue resumes your current game." :
+                storyFile(false).isFile() || storyFile(true).isFile() ? "Continue or load a saved game." : "Import your original data, then choose Set up game and New Game.");
+        }
+        controlsPanel.setVisibility(View.GONE);menuOverlay.setVisibility(View.VISIBLE);menuOverlay.bringToFront();
+        if (!menuArtLoaded && !menuArtLoading) loadMenuArt();
+    }
+
+    private void closeMenu() {
+        if (awaitedAction != null) return;
+        menuVisible = false;menuOverlay.setVisibility(View.GONE);controlsPanel.setVisibility(View.VISIBLE);
+        developerRow.setVisibility(developerMode ? View.VISIBLE : View.GONE);gameRow.setVisibility(developerMode ? View.GONE : View.VISIBLE);
+        status.setMaxLines(developerMode ? 8 : 2);nativeDeveloperMode(developerMode);nativeMenuPaused(false);
+    }
+
+    private void launchGameAction(int command, String action) {
+        if (importing || awaitedAction != null) return;
+        previousResult = nativeGameResult();awaitedAction = action;
+        menuStatus.setText(action.equals("save") ? "Saving game…" : "Loading game…");
+        nativeCommand(command);
+    }
+
+    private void chooseStorySave() {
+        if (importing || awaitedAction != null) return;
+        java.util.ArrayList<String> labels = new java.util.ArrayList<>();java.util.ArrayList<Integer> commands = new java.util.ArrayList<>();
+        if (storyFile(false).isFile()) {labels.add("Manual save");commands.add(13);}
+        if (storyFile(true).isFile()) {labels.add("Autosave");commands.add(16);}
+        if (labels.isEmpty()) {showText("Load Game", "No story saves yet. Start a New Game first.");return;}
+        new AlertDialog.Builder(this).setTitle("Load Game").setItems(labels.toArray(new String[0]), (dialog, index) -> launchGameAction(commands.get(index), "load"))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void loadMenuArt() {
+        menuArtLoading = true;menuArtAttempted = true;
+        worker.execute(() -> {
+            int[] pixels = nativeMenuArt();
+            runOnUiThread(() -> {
+                menuArtLoading = false;if (isFinishing() || isDestroyed() || pixels == null || pixels.length < 3) return;
+                int width = pixels[0], height = pixels[1];
+                if (width <= 0 || height <= 0 || (long) width*height != pixels.length-2) return;
+                menuImage.setImageBitmap(Bitmap.createBitmap(pixels, 2, width, width, height, Bitmap.Config.ARGB_8888));menuArtLoaded = true;
+            });
+        });
+    }
+
+    private void showSettings() {
+        LinearLayout settings = new LinearLayout(this);settings.setOrientation(LinearLayout.VERTICAL);settings.setPadding(24, 16, 24, 16);
+        TextView volumeLabel = new TextView(this);volumeLabel.setText("Audio volume");settings.addView(volumeLabel);
+        SeekBar volume = new SeekBar(this);volume.setMax(100);volume.setProgress(getPreferences(MODE_PRIVATE).getInt("volume", 100));settings.addView(volume);
+        CheckBox markers = new CheckBox(this);markers.setText("Show hotspot markers");markers.setChecked(getPreferences(MODE_PRIVATE).getBoolean("markers", true));settings.addView(markers);
+        CheckBox captions = new CheckBox(this);captions.setText("Show subtitles");captions.setChecked(subtitlesEnabled);settings.addView(captions);
+        new AlertDialog.Builder(this).setTitle("Settings").setView(settings).setPositiveButton("Apply", (dialog, which) -> {
+            subtitlesEnabled = captions.isChecked();getPreferences(MODE_PRIVATE).edit().putInt("volume", volume.getProgress()).putBoolean("markers", markers.isChecked()).putBoolean("subtitles", subtitlesEnabled).apply();
+            nativeOptions(volume.getProgress(), markers.isChecked());
+        }).setNegativeButton("Cancel", null).show();
+    }
+
+    @Override public void onBackPressed() {
+        if (menuOverlay == null) {super.onBackPressed();return;}
+        if (menuVisible && (nativeGameFlags() & 1) != 0 && awaitedAction == null) closeMenu();else openMenu();
     }
 
     private Button button(String label, View.OnClickListener action) {
         Button button = new Button(this);
         button.setText(label); button.setAllCaps(false); button.setContentDescription(label);
-        button.setMinHeight(48); button.setOnClickListener(action);
+        button.setMinHeight((int) (48 * getResources().getDisplayMetrics().density + 0.5f)); button.setOnClickListener(action);
         return button;
     }
 
@@ -226,6 +378,7 @@ public class MainActivity extends SDLActivity {
     }
 
     @Override protected void onPause() {
+        if (!mBrokenLibraries) nativeCommand(15);
         statusHandler.removeCallbacks(refreshStatus);
         pendingAudioPath = null;
         super.onPause();
@@ -293,12 +446,13 @@ public class MainActivity extends SDLActivity {
             runOnUiThread(() -> { if (!isDestroyed()) {
                 importing = false;
                 status.setText(finalMessage); importButton.setEnabled(true); browseButton.setEnabled(true);
+                menuArtAttempted = false;if (menuVisible) { menuStatus.setText(finalMessage);loadMenuArt(); }
             }});
         });
     }
 
     private void chooseNavigationSource() {
-        new AlertDialog.Builder(this).setTitle("A01 scene connections")
+        new AlertDialog.Builder(this).setTitle("Set up game")
                 .setMessage("Choose Jerusalem.ex_ or Jerusalem.exe from your original disc. The app reads its A01 scene connections and ambient sound bindings without running or retaining the Windows program.")
                 .setPositiveButton("Choose file", (dialog, which) -> {
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -347,7 +501,7 @@ public class MainActivity extends SDLActivity {
             runOnUiThread(() -> { if (!isDestroyed()) {
                 importing = false; importButton.setEnabled(true); browseButton.setEnabled(true);
                 status.setText(resultMessage);
-                if (ready) nativeCommand(8);
+                if (ready) { if (!menuVisible) nativeCommand(8);else menuStatus.setText("Game connections ready. Choose New Game."); }
                 else showText("A01 navigation", resultMessage);
             }});
         });

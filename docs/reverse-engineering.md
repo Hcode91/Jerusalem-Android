@@ -215,3 +215,10 @@ The [A01 story ledger](a01-story-milestone-13.md) documents the new opening/firs
 Connection APIs `0042bf70` and `0042bf90` enable and disable inclusive index ranges, respectively; their last two arguments are not cursor/event values. Object flag 8 is a world use-source selection, not a bag pickup. Cinema BMP sprites now expose a written-vector coverage mask so index-0 holes preserve the background and written black pixels remain visible. TGA-named CNM entries have meaningful fourth-byte values; their alpha composition remains unverified and the stage loader rejects them explicitly.
 
 The implemented story stops before the next topic-selection puzzle, which needs the general conversation UI and TGA alpha path. Story checkpoints, lip-sync, all animation callbacks and the remaining A01 area ending are not implemented. Existing preview checkpoint semantics are unchanged. Original binaries/data and captured/decompiled research remain private and excluded from commits.
+
+
+## Milestone 14: menu artwork, native story snapshots and alpha
+
+[Menu/story-save evidence](menu-story-saves-milestone-14.md) documents the new front end, snapshot version 1 and private original-data checks. `SY.AT3` contains the original `MENU.BMP`; it is decoded at runtime rather than bundled. Native story snapshots preserve the supported state, clocks and queued media; they remain distinct from Windows saves and old navigation previews.
+
+The previously open TGA-named CNM alpha path is now verified: the executable calls `mmxImage32PreAlpha` from `00420840`; DLL routines `10001270`, `10001070` and `10001d50` establish `floor(src*a/256) + floor(dst*(255-a)/256)` for RGB. An isolated harness matches 2,313 pixels across all alpha values, padded rows and odd/even widths. The next camp scene can render, but its gameplay remains unimplemented. `0048a5a0`/`0048a610` are visual BoxShow/BoxHide; the A01 Hegira/Allah topic UI and puzzle effects still require further implementation.
