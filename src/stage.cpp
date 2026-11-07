@@ -74,17 +74,22 @@ std::filesystem::path game_file(const std::filesystem::path& root,const std::vec
 StageArt::StageArt(std::vector<std::uint8_t> archive):data_(std::move(archive)),directory_(parse_at3(Bytes(data_))) {}
 Bitmap StageArt::image(const std::string& name) const {
   if(!name_ok(upper(name)))throw ParseError("unsafe art name");
-  if(upper(name).size()>=4 && upper(name).substr(name.size()-4)==".TGA")throw ParseError("AT3 TGA-named alpha composition is not verified yet");
+  const bool alpha=upper(name).size()>=4 && upper(name).substr(name.size()-4)==".TGA";
   const ArtEntry* found=nullptr;
   for(const auto& e:directory_.entries){const auto p=e.name.find_last_of("/\\");if(upper(e.name.substr(p==std::string::npos?0:p+1))==upper(name)){if(found)throw ParseError("ambiguous AT3 basename: "+name);found=&e;}}
   if(!found)throw ParseError("missing AT3 image: "+name);
   const auto b=Bytes(data_).slice(found->offset,found->stored_size);
-  if(b.is(0,std::string("CNM UNR\0",8))){CinemaDecoder d(std::vector<std::uint8_t>(b.data(),b.data()+b.size()));if(d.info().frames!=1)throw ParseError("expected a single AT3 image");while(!d.done())d.next();return d.sprite();}
+  if(b.is(0,std::string("CNM UNR\0",8))){CinemaDecoder d(std::vector<std::uint8_t>(b.data(),b.data()+b.size()));if(d.info().frames!=1)throw ParseError("expected a single AT3 image");while(!d.done())d.next();return alpha?d.alpha_image():d.sprite();}
+  if(alpha)throw ParseError("unsupported AT3 TGA encoding");
   return decode_bitmap(b);
 }
 void stage_blit(Bitmap& dst,const Bitmap& src,int x,int y) {
   if(!dst.width || !dst.height || dst.width>4096 || dst.height>4096 || src.width>4096 || src.height>4096 || std::uint64_t(dst.width)*dst.height*4!=dst.rgba.size() || !src.width || !src.height || std::uint64_t(src.width)*src.height*4!=src.rgba.size())throw ParseError("invalid stage bitmap");
   for(unsigned row=0;row<src.height;++row)for(unsigned col=0;col<src.width;++col){const auto dx=std::int64_t(x)+col,dy=std::int64_t(y)+row;if(dx<0 || dy<0 || dx>=dst.width || dy>=dst.height)continue;const auto s=(std::size_t(row)*src.width+col)*4,d=(std::size_t(dy)*dst.width+std::size_t(dx))*4;const unsigned a=src.rgba[s+3];for(unsigned c=0;c<3;++c)dst.rgba[d+c]=static_cast<std::uint8_t>((unsigned(src.rgba[s+c])*a+unsigned(dst.rgba[d+c])*(255-a)+127)/255);dst.rgba[d+3]=255;}
+}
+void stage_blit_tga(Bitmap& dst,const Bitmap& src,int x,int y) {
+  if(!dst.width || !dst.height || dst.width>4096 || dst.height>4096 || !src.width || !src.height || src.width>4096 || src.height>4096 || std::uint64_t(dst.width)*dst.height*4!=dst.rgba.size() || std::uint64_t(src.width)*src.height*4!=src.rgba.size())throw ParseError("invalid alpha bitmap");
+  for(unsigned row=0;row<src.height;++row)for(unsigned col=0;col<src.width;++col){const auto dx=std::int64_t(x)+col,dy=std::int64_t(y)+row;if(dx<0 || dy<0 || dx>=dst.width || dy>=dst.height)continue;const auto s=(std::size_t(row)*src.width+col)*4,d=(std::size_t(dy)*dst.width+std::size_t(dx))*4;const unsigned a=src.rgba[s+3];for(unsigned c=0;c<3;++c)dst.rgba[d+c]=static_cast<std::uint8_t>((unsigned(src.rgba[s+c])*a>>8)+(unsigned(dst.rgba[d+c])*(255-a)>>8));dst.rgba[d+3]=255;}
 }
 std::optional<HotspotPoint> stage_point(double x,double y,int w,int h) {
   if(w<=0 || h<=0 || !std::isfinite(x) || !std::isfinite(y))return {};

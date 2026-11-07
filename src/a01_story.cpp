@@ -40,13 +40,13 @@ bool A01Story::complete(std::uint64_t serial){
     case 11004:push(StoryCue::Speech,11005);break;
     case 11005:push(StoryCue::Node,1010105,"",{24,0,87});break;
     case 11002:push(StoryCue::Movie,6,"A01S01_AN006");push(StoryCue::Puzzle,10043);break;
-    case 11011:items_.inventory_.clear();push(StoryCue::Puzzle,10021);push(StoryCue::Speech,11012);break;
+    case 11011:bag_cleared_=true;items_.inventory_.clear();push(StoryCue::Puzzle,10021);push(StoryCue::Speech,11012);break;
     case 11012:push(StoryCue::Movie,9,"A01S01_AN009");push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11013);break;
     case 11013:push(StoryCue::Speech,11014);break;
     case 11014:push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11015);break;
     case 11015:push(StoryCue::Speech,11016);break;
     case 11016:push(StoryCue::Puzzle,10026);push(StoryCue::Speech,11017);break;
-    case 11017:push(StoryCue::Boundary,10023,"First escape complete. The next conversation/topic puzzle is not implemented yet.");break;
+    case 11017:push(StoryCue::Puzzle,10023);push(StoryCue::Boundary,10023,"First escape complete. The next conversation/topic puzzle is not implemented yet.");break;
     default:break;
   }
   return true;

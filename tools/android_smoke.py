@@ -131,6 +131,27 @@ def click_scrolling(text):
     raise RuntimeError(f'Scrollable UI control not found: {text}')
 
 
+def click_menu(text):
+    """Menu actions remain reachable at phone font sizes and in landscape."""
+    for direction in (1, -1):
+        previous = None
+        for _ in range(12):
+            xml = current_ui();center = control_center(xml, text)
+            if center is not None:
+                adb('shell', 'input', 'tap', str(center[0]), str(center[1]));return
+            if xml == previous: break
+            previous = xml
+            for node in ET.fromstring(xml).iter('node'):
+                if node.get('class') != 'android.widget.ScrollView' or node.get('scrollable') != 'true': continue
+                bounds = list(map(int, re.findall(r'-?\d+', node.get('bounds', ''))))
+                if len(bounds) == 4 and bounds[2] > bounds[0] and bounds[3]-bounds[1] > 40:
+                    x1, y1, x2, y2 = bounds
+                    start, end = (y2-20, y1+20) if direction == 1 else (y1+20, y2-20)
+                    adb('shell', 'input', 'swipe', str((x1+x2)//2), str(start), str((x1+x2)//2), str(end), '300');break
+            else: raise RuntimeError(f'No menu scroll area while locating {text}')
+    raise RuntimeError(f'Menu action not found: {text}')
+
+
 def collect_diagnostics():
     # A failed diagnostic command must not hide the original smoke-test error.
     commands = [
@@ -268,11 +289,23 @@ def synthetic_stage_fixture(bitmap, pcm_wave):
     name = b'\\bgr\\SYNTH.BMP'
     entry = name+bytes(243-len(name))+struct.pack('<III', 32+255, len(bitmap), len(bitmap))
     archive = b'ATIII'+bytes(3)+struct.pack('<III', 255, 1, 255)+bytes(12)+entry+bitmap
-    files['data/A01.AT3'] = files['data/SY.AT3'] = archive
+    files['data/A01.AT3'] = archive
+    entries = bytearray()
+    for entry_name in (b'\\bgr\\SYNTH.BMP', b'\\image\\MENU.BMP'):
+        entries += entry_name+bytes(243-len(entry_name))+struct.pack('<III', 32+510, len(bitmap), len(bitmap))
+    files['data/SY.AT3'] = b'ATIII'+bytes(3)+struct.pack('<III', 510, 2, 255)+bytes(12)+entries+bitmap
     for voice in ids:
         # The original opening is WAS on disc despite the executable naming WAC.
         extension = 'WAS' if voice == 10999 else 'WAC'
-        files[f'data/a01/sound/eng/SYNTH_VOICE_{voice}.{extension}'] = pcm_wave
+        audio_bytes = pcm_wave
+        if voice == 10999:
+            with wave.open(io.BytesIO(pcm_wave), 'rb') as source:
+                params, samples = source.getparams(), source.readframes(source.getnframes())
+            opening = io.BytesIO()
+            with wave.open(opening, 'wb') as target:
+                target.setparams(params);target.writeframes(samples*4)
+            audio_bytes = opening.getvalue()
+        files[f'data/a01/sound/eng/SYNTH_VOICE_{voice}.{extension}'] = audio_bytes
         files[f'data/a01/dia/eng/SYNTH_VOICE_{voice}.DIA'] = b'0 Synthetic story speech\r\n400 END\r\n'
     for movie in ('001', '002', '003', '004', '006', '007A', '007B', '007C', '009'):
         files[f'data/a01/pla/eng/A01S01_AN{movie}.CI2'] = synthetic_cinema(3, preload_audio=True)
@@ -288,6 +321,9 @@ def main():
         adb('logcat', '-c')
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
         wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Native engine did not become ready')
+        wait_for(lambda: b'New Game' in current_ui(), 'Main menu did not appear on a fresh launch')
+        (OUTPUT / 'main-menu.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        click_menu('Developer Tools')
         # An independently generated 2x2 uncompressed BMP. No game data enters CI.
         bitmap = bytearray(70)
         bitmap[:2] = b'BM'
@@ -434,6 +470,8 @@ def main():
         checkpoint = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-preview.jrs')
         if checkpoint[:8] != b'JRNSAVE\0' or not 68 <= len(checkpoint) <= 132:
             raise RuntimeError('Checkpoint is missing or not the bounded native metadata format')
+        # Settings must survive restart, not merely fall back to their defaults.
+        click_scrolling('Menu');click_menu('Settings');click('Show subtitles');click('Apply')
         # A real process restart proves persistence beyond in-memory state.
         (OUTPUT / 'before-checkpoint-restart-logcat.txt').write_bytes(adb('logcat', '-d'))
         adb('shell', 'am', 'force-stop', PACKAGE)
@@ -441,6 +479,11 @@ def main():
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
         wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Native app did not restart for checkpoint restoration')
+        click_menu('Settings')
+        caption_nodes = [node for node in ET.fromstring(current_ui()).iter('node') if node.get('text') == 'Show subtitles']
+        if not caption_nodes or caption_nodes[0].get('checked') != 'false':
+            raise RuntimeError('Subtitle setting did not persist across process restart')
+        click('Show subtitles');click('Apply');click_menu('Developer Tools')
         click_scrolling('Load checkpoint')
         wait_for(lambda: any(row[0] == 'load' for row in checkpoint_states(adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'))),
                  'Native checkpoint did not load after process restart')
@@ -498,6 +541,7 @@ def main():
         adb('logcat', '-c')
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
         wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination restart failed')
+        click_menu('Developer Tools')
         click_scrolling('Load checkpoint')
         wait_for(lambda: b'Checkpoint state: action=load' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Combination checkpoint did not reload')
         click_scrolling('Inventory')
@@ -543,6 +587,7 @@ def main():
         adb('shell', 'am', 'force-stop', PACKAGE); adb('logcat', '-c')
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
         wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story restart failed')
+        click_menu('Developer Tools')
         click_scrolling('Load checkpoint')
         wait_for(lambda: b'Checkpoint state: action=load node=2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Story checkpoint did not restore')
         click_scrolling('Inventory')
@@ -591,7 +636,8 @@ def main():
             adb('shell', f'run-as {PACKAGE} mkdir -p files/game-data/{parent}')
             adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/game-data/{name}'", input=content)
         adb('logcat', '-c')
-        click_scrolling('Start A01 story')
+        click_scrolling('Menu')
+        click_menu('New Game')
         wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
                  'Opening movie / black puzzle / speech / second movie did not enter node 1')
         for node in range(2, 7):
@@ -612,7 +658,44 @@ def main():
         if b'A01 story stopped:' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'):
             raise RuntimeError('Story emitted a decoder, layout or playback error')
         (OUTPUT / 'synthetic-story-callbacks.png').write_bytes(adb('exec-out', 'screencap', '-p'))
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, story opening / encounter / puzzle callbacks using synthetic assets, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        click('Menu')
+        click_menu('Save Game')
+        wait_for(lambda: b'Game saved.' in current_ui(), 'Menu Save Game did not finish')
+        story_save = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/native-saves/a01-story.jrs')
+        if not story_save.startswith(b'JRNSTORY'):
+            raise RuntimeError('Story slot contains the wrong save format')
+        (OUTPUT / 'story-menu-save.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        adb('shell', 'am', 'force-stop', PACKAGE);adb('logcat', '-c')
+        adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
+        wait_for(lambda: b'Ready.' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Menu restart failed')
+        wait_for(lambda: b'Menu artwork: size=2x2' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'), 'Imported menu artwork did not reach the Android menu')
+        click_menu('Load Game');click('Manual save')
+        wait_for(lambda: b'Story session: action=load scene=1010105' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Manual story save did not restore after a process restart')
+        wait_for(lambda: b'Inventory' in current_ui(), 'Load Game did not dismiss the menu')
+        click('Menu');click_menu('Continue')
+        wait_for(lambda: b'Inventory' in current_ui(), 'Continue did not return to the game')
+        click('Menu')
+        # A bad manual save must leave the active game resumable.
+        adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-story.jrs'", input=b'bad story save')
+        click_menu('Load Game');click('Manual save')
+        wait_for(lambda: b'not a native story save' in current_ui(), 'Corrupted story save was not rejected')
+        click_menu('Continue')
+        wait_for(lambda: b'Inventory' in current_ui(), 'Failed load damaged the active session')
+
+        click('Menu');adb('logcat', '-c');click_menu('New Game')
+        wait_for(lambda: b'Audio buffer drained: SYNTH_VOICE_10999' not in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S') and b'Dialogue started: id=10999' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Opening speech did not become active for save testing')
+        click('Menu');click_menu('Save Game')
+        wait_for(lambda: b'Game saved.' in current_ui(), 'Speech save did not finish')
+        click_menu('Load Game');click('Manual save')
+        wait_for(lambda: re.search(rb'Story session: action=load scene=10045 media_ms=[1-9][0-9]*', adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S')),
+                 'Speech save did not restore its playback offset')
+        wait_for(lambda: b'A01 story cue: kind=0 id=1010101' in adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S'),
+                 'Restored speech/movie sequence did not return to node 1')
+        if adb('logcat', '-d', '-s', 'Jerusalem:I', '*:S').count(b'A01 story cue: kind=2 id=2 ') != 1:
+            raise RuntimeError('Restored speech fired its completion callback more than once')
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, main menu and original-data setup entry, separate developer tools, manual story save/load across process restart, failed-load preservation, mid-speech resume with exactly one completion callback, story opening / encounter / puzzle callbacks using synthetic assets, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

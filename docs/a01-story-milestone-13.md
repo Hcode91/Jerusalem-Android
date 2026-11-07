@@ -1,5 +1,7 @@
 # A01 opening and first escape
 
+**Update:** [Milestone 14](menu-story-saves-milestone-14.md) adds the game menu, story saves and verified alpha sprites. It supersedes the save/alpha limitations below. The escape walkthrough remains applicable; choose New Game, and use Developer Tools if diagnostic hotspot IDs are needed.
+
 This milestone connects the original A01 opening to the first escape and its following conversation. It does **not** complete area A01. The native controller stops before the next topic-selection puzzle instead of bypassing it or claiming an area ending.
 
 ## Implemented

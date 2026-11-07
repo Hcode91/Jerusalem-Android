@@ -1,5 +1,7 @@
 """Cross-check original-free emulator stage data against native readers."""
 import os
+import io
+import wave
 from pathlib import Path
 import struct
 import subprocess
@@ -21,7 +23,10 @@ class StageFixtureTests(unittest.TestCase):
         struct.pack_into('<I', bitmap, 10, 54)
         struct.pack_into('<IiiHH', bitmap, 14, 40, 2, 2, 1, 24)
         bitmap[54:] = bytes([255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 255, 255, 255, 255, 0, 0])
-        files = synthetic_stage_fixture(bytes(bitmap), b'synthetic PCM supplied separately')
+        sound = io.BytesIO()
+        with wave.open(sound, 'wb') as writer:
+            writer.setnchannels(2);writer.setsampwidth(2);writer.setframerate(8000);writer.writeframes(bytes(320))
+        files = synthetic_stage_fixture(bytes(bitmap), sound.getvalue())
         self.assertIn('data/a01/sound/eng/SYNTH_VOICE_10999.WAS', files)
         self.assertNotIn('data/a01/sound/eng/SYNTH_VOICE_10999.WAC', files)
         with tempfile.TemporaryDirectory() as temporary:
@@ -38,5 +43,7 @@ class StageFixtureTests(unittest.TestCase):
             self.assertEqual(len(pixels), 16)
             self.assertEqual(pixels[3::4], bytes([255])*4)
             self.assertNotEqual(pixels[:3], pixels[4:7])
+            subprocess.run([native, 'stage-art', str(root/'data/SY.AT3'), 'MENU.BMP', str(root/'menu.pam')], check=True)
+            self.assertEqual((root/'menu.pam').read_bytes(), (root/'image.pam').read_bytes())
             report = subprocess.check_output([native, 'cinema', str(root/'data/a01/pla/eng/A01S01_AN001.CI2')], text=True)
             self.assertIn('Decoded 3 frame(s)', report)

@@ -73,9 +73,24 @@ std::vector<std::uint8_t> advanced_cinema(bool overshoot=false){
  b.push_back('S');const auto p=b.size();b.resize(p+47);word(b,p,payload.size());word(b,p+4,offset);word(b,p+8,n,2);word(b,p+10,4,2);word(b,p+12,w);word(b,p+16,h);b.insert(b.end(),payload.begin(),payload.end());return b;
 }
 
+void cinema_seek_tests(){
+ for(bool preload:{false,true}){
+  auto frame=cinema(true);std::vector<std::uint8_t> bytes(frame.begin(),frame.begin()+208);bytes.resize(232,0);word(bytes,28,3);word(bytes,12,1000);word(bytes,36,30);word(bytes,194,8000,2);
+  std::vector<std::uint8_t> all;
+  for(unsigned i=0;i<3;++i)all.insert(all.end(),3200,std::uint8_t(i+1));
+  for(unsigned i=0;i<3;++i){bytes.push_back('Z');const auto n=preload?(i==0?9600U:0U):3200U;word(bytes,bytes.size(),n);if(preload && i==0)bytes.insert(bytes.end(),all.begin(),all.end());else if(!preload)bytes.insert(bytes.end(),3200,std::uint8_t(i+1));bytes.insert(bytes.end(),frame.begin()+225,frame.end());}
+  CinemaDecoder decoder(bytes);auto seek=seek_cinema(decoder,150);check(seek.frames==2 && seek.position_ms==150);
+  auto pcm=seek.pcm;while(!decoder.done()){const auto e=decoder.next();if(e.kind==CinemaEvent::Audio && e.channel==0)pcm.insert(pcm.end(),e.pcm.begin(),e.pcm.end());}
+  check(pcm==std::vector<std::uint8_t>(all.begin()+4800,all.end()));
+  CinemaDecoder reference(bytes);while(!reference.done())reference.next();check(decoder.dib()==reference.dib());
+  reject([&]{seek_cinema(decoder,0);});CinemaDecoder bad(bytes);reject([&]{seek_cinema(bad,2000);});
+  CinemaDecoder beginning(bytes);check(seek_cinema(beginning,0).frames==0 && beginning.pristine());
+ }
+}
+
 }
 int main(int argc,char** argv){try{
- dialogue_paths();
+ dialogue_paths();cinema_seek_tests();
  const auto g=graph();const auto text=write_navigation(g);check(text.find("NAV_V5")!=std::string::npos);check(write_navigation(parse_navigation(text))==text);
  const auto legacy=legacy_navigation(g,2);check(legacy.items.size()==3 && !has_story_rules(legacy));
  const Checkpoint old{1,{0,0,85},{11,10,12}};const auto older=encode_checkpoint(legacy,7,old);check(decode_checkpoint(Bytes(older),g,7).inventory==old.inventory);

@@ -49,6 +49,22 @@ class SmokeHarnessTests(unittest.TestCase):
             self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '20', '125', '280', '125', '350'))
             self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '120', '125'))
 
+    def test_menu_scrolls_to_developer_tools(self):
+        before = ui({'class': 'android.widget.ScrollView', 'scrollable': 'true', 'bounds': '[120,0][320,220]'})
+        after = ui({'text': 'Developer Tools', 'enabled': 'true', 'bounds': '[130,150][310,210]'})
+        with patch.object(smoke, 'current_ui', side_effect=[before, after]), patch.object(smoke, 'adb') as adb:
+            smoke.click_menu('Developer Tools')
+            self.assertEqual(adb.call_args_list[0].args, ('shell', 'input', 'swipe', '220', '200', '220', '20', '300'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '220', '180'))
+
+    def test_menu_reverses_to_reach_new_game(self):
+        edge = ui({'class': 'android.widget.ScrollView', 'scrollable': 'true', 'bounds': '[120,0][320,220]'})
+        found = ui({'text': 'New Game', 'enabled': 'true', 'bounds': '[130,20][310,80]'})
+        with patch.object(smoke, 'current_ui', side_effect=[edge, edge, edge, found]), patch.object(smoke, 'adb') as adb:
+            smoke.click_menu('New Game')
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '220', '20', '220', '200', '300'))
+            self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '220', '50'))
+
     def test_movie_below_browser_fold_is_scrolled_into_view(self):
         before = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,572][320,620]'},
                     {'class': 'android.widget.ListView', 'scrollable': 'true', 'bounds': '[16,94][304,568]'},

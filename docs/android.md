@@ -101,3 +101,8 @@ At A01S01N04R01, using harness/stone/sling on its USE marker plays ADRI_DIA002 w
 ## A01 story opening and first escape
 
 After installing the milestone-13 APK, long-press **A01 navigation** and select the original executable again to extract the new puzzle layouts, then tap **Start A01 story**. Follow the [step-by-step phone test](a01-story-milestone-13.md#phone-test-from-an-upgraded-or-fresh-installation). The first escape is connected to original media; the following topic puzzle, full A01 ending and story checkpoints are unfinished. Existing preview checkpoints are accessed through **A01 navigation**. No original assets enter the APK.
+
+
+## Game menu and story saves
+
+The app now opens a main menu. Imported data and prepared connections are retained on upgrade. Choose **New Game**, or **Continue** / **Load Game** for the new story slots. **Save Game** preserves the supported story state and playback position; **Menu** pauses the current attempt. The old inspector and navigation checkpoint controls are under **Developer Tools**. See [the full menu/save test](menu-story-saves-milestone-14.md#phone-test). The remaining A01 camp interactions and area ending are still unfinished.

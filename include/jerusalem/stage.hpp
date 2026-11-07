@@ -26,11 +26,14 @@ class StageArt {
 };
 // Fixed 640x480 original puzzle coordinates. Pixel bounds are half-open.
 void stage_blit(Bitmap& destination,const Bitmap& source,int x,int y);
+// Verified original PreAlpha/CopyAlpha integer arithmetic for TGA-named CNM.
+void stage_blit_tga(Bitmap& destination,const Bitmap& source,int x,int y);
 std::optional<HotspotPoint> stage_point(double x,double y,int viewport_width,int viewport_height);
 std::size_t stage_frame(std::uint64_t elapsed,const StageLayer& layer);
 // Independently authored first A01 escape controller. No original machine code executes.
 // Media completion must be acknowledged using its serial; cancelled/stale completions do nothing.
 struct StoryCue {enum Kind {Node,Puzzle,Movie,Speech,Boundary} kind;std::uint32_t id=0;std::string asset;Camera camera{};std::uint64_t serial=0;};
+struct StoryResume {Camera camera{};std::uint64_t media_ms=0,visual_ms=0;std::optional<std::uint32_t> selected;};
 class A01Story {
   StageSetup setup_;SceneGraph graph_;InteractionState& items_;
   std::set<std::pair<std::uint32_t,std::uint32_t>> shown_;
@@ -41,7 +44,7 @@ class A01Story {
   std::uint64_t serial_=0,deadline_=0,clock_=0;
   std::uint32_t scene_=0,phase_=0,character_=0;
   unsigned deadline_kind_=1;
-  bool puzzle_=false,failed_=false,boundary_=false;
+  bool puzzle_=false,failed_=false,boundary_=false,bag_cleared_=false;
   void push(StoryCue::Kind kind,std::uint32_t id=0,const std::string& asset={},Camera camera={});
   void show(std::uint32_t object,std::uint32_t presentation,bool visible);
   void all(std::uint32_t object,bool visible);
@@ -51,6 +54,10 @@ class A01Story {
  public:
   A01Story(StageSetup setup,SceneGraph graph,InteractionState& inventory);
   void start();
+  std::vector<std::uint8_t> save(const StoryResume& resume,std::uint64_t assets) const;
+  // Validates before replacing state; requeues active media without completing it.
+  StoryResume load(Bytes bytes,std::uint64_t assets);
+  const std::optional<StoryCue>& playing() const {return playing_;}
   std::optional<StoryCue> next();
   bool complete(std::uint64_t serial);
   void tick(std::uint64_t elapsed_ms);

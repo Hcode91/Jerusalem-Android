@@ -17,4 +17,6 @@ std::vector<std::uint8_t> encode_checkpoint(const SceneGraph& graph,std::uint64_
 Checkpoint decode_checkpoint(Bytes bytes,const SceneGraph& graph,std::uint64_t assets);
 void write_checkpoint(const std::filesystem::path& path,const SceneGraph& graph,std::uint64_t assets,const Checkpoint& checkpoint);
 Checkpoint read_checkpoint(const std::filesystem::path& path,const SceneGraph& graph,std::uint64_t assets);
+// Shared atomic writer for independent native save formats.
+void write_save_file(const std::filesystem::path& path,const std::vector<std::uint8_t>& bytes);
 }

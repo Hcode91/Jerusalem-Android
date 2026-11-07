@@ -104,6 +104,9 @@ Checkpoint decode_checkpoint(Bytes b,const SceneGraph& graph,std::uint64_t asset
 }
 void write_checkpoint(const std::filesystem::path& path,const SceneGraph& graph,std::uint64_t assets,const Checkpoint& cp){
   const auto bytes=encode_checkpoint(graph,assets,cp); // Validate before touching the existing checkpoint.
+  write_save_file(path,bytes);
+}
+void write_save_file(const std::filesystem::path& path,const std::vector<std::uint8_t>& bytes){
 #ifdef _WIN32
   (void)path;(void)bytes;throw ParseError("atomic checkpoint file writes currently support Linux and Android");
 #else
