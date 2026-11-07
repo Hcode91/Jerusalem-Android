@@ -61,7 +61,9 @@ public class MainActivity extends SDLActivity {
             if (isFinishing() || isDestroyed() || mBrokenLibraries || status == null) return;
             if (!importing) {
                 String caption = nativeSubtitle();
-                subtitles.setText(caption); subtitles.setVisibility(caption.isEmpty() || !subtitlesEnabled ? View.GONE : View.VISIBLE);
+                if (!caption.contentEquals(subtitles.getText())) subtitles.setText(caption);
+                int captionVisibility = caption.isEmpty() || !subtitlesEnabled ? View.GONE : View.VISIBLE;
+                if (subtitles.getVisibility() != captionVisibility) subtitles.setVisibility(captionVisibility);
                 String message = nativeStatus();
                 if (!message.equals(lastNativeStatus)) {
                     if (!engineReadySeen && message.startsWith("Ready")) {engineReadySeen = true;menuArtAttempted = false;}
@@ -72,9 +74,6 @@ public class MainActivity extends SDLActivity {
             if (menuOverlay != null) {
                 int flags = nativeGameFlags();
                 boolean saved = storyFile(false).isFile() || storyFile(true).isFile();
-                for (Button action : menuButtons) action.setEnabled(!importing && awaitedAction == null);
-                continueButton.setEnabled(!importing && awaitedAction == null && (((flags & 1) != 0 && (flags & 6) == 0) || saved));
-                saveGameButton.setEnabled(!importing && awaitedAction == null && (flags & 1) != 0 && (flags & 6) == 0);
                 if (awaitedAction != null) {
                     String reply = nativeGameResult();
                     if (!reply.equals(previousResult) && reply.contains(":" + awaitedAction + ":")) {
@@ -83,6 +82,14 @@ public class MainActivity extends SDLActivity {
                         menuStatus.setText(nativeStatus());
                         if (success && !action.equals("save")) { developerMode = false; closeMenu(); }
                     }
+                }
+                // Compute the final state once. Enabling all controls and then
+                // disabling Continue/Save on every poll prevents accessibility idle.
+                boolean ready = !importing && awaitedAction == null;
+                boolean active = (flags & 1) != 0 && (flags & 6) == 0;
+                for (Button action : menuButtons) {
+                    boolean enabled = ready && (action == continueButton ? active || saved : action == saveGameButton ? active : true);
+                    if (action.isEnabled() != enabled) action.setEnabled(enabled);
                 }
                 if (menuVisible && !menuArtLoading && !menuArtLoaded && !menuArtAttempted && lastNativeStatus.startsWith("Ready")) loadMenuArt();
             }
