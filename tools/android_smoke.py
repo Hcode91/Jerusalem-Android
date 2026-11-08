@@ -441,14 +441,18 @@ def puzzle_tap(x, y):
     wait_for(locate, 'Game surface and native puzzle viewport did not reach a matching layout')
 
 
-def story_puzzle_ready(logs, scene):
-    """A fresh final puzzle cue, not an earlier visit or an intermediate speech view."""
-    cues = re.findall(rb'A01 story cue: kind=(\d+) id=(\d+) serial=(\d+)', logs)
-    return bool(cues) and tuple(map(int, cues[-1][:2])) == (1, scene)
+def story_puzzle_ready(logs, scene, inventory=None):
+    """Require fresh idle state, including same-scene media completion and bag state."""
+    events = re.findall(rb'A01 story (cue: [^\r\n]*|ready: scene=\d+ puzzle=\d+ inventory=\[[\d,]*\])', logs)
+    if not events: return False
+    ready = re.fullmatch(rb'ready: scene=(\d+) puzzle=(\d+) inventory=\[([\d,]*)\]', events[-1])
+    if ready is None or tuple(map(int, ready.groups()[:2])) != (scene, 1): return False
+    owned = [int(item) for item in ready[3].split(b',') if item]
+    return inventory is None or sorted(owned) == sorted(inventory)
 
 
-def wait_for_story_puzzle(scene, after, message):
-    wait_for(lambda: story_puzzle_ready(game_logs()[after:], scene), message)
+def wait_for_story_puzzle(scene, after, message, inventory=None):
+    wait_for(lambda: story_puzzle_ready(game_logs()[after:], scene, inventory), message)
 
 
 def full_a01_camp_smoke():
@@ -491,12 +495,14 @@ def full_a01_camp_smoke():
     after = len(game_logs())
     use(10024, 500, 150) # Wrong card at Abraham: retain the bag and return.
     wait_for(lambda: re.search(rb'A01 story cue: kind=3 id=1104[012]', game_logs()[after:]), 'Wrong card did not play its verified response')
-    wait_for_story_puzzle(10037, after, 'Wrong card did not return to the table')
+    remaining = {10019, 10020, *range(10023, 10030)}
+    wait_for_story_puzzle(10037, after, 'Wrong card did not return with its inventory intact', remaining)
     for i, (card, x) in enumerate(((10023, 500), (10025, 350), (10024, 200), (10026, 50), (10028, 350), (10029, 200), (10027, 50))):
         after = len(game_logs())
         use(card, x, 150)
         expected = 10023 if card == 10027 else 10037
-        wait_for_story_puzzle(expected, after, f'Card {card} did not finish')
+        remaining.remove(card)
+        wait_for_story_puzzle(expected, after, f'Card {card} did not finish with the expected inventory', remaining)
         if i == 0:
             click_scrolling('Menu');click_menu('Save Game')
             wait_for(lambda: b'Game saved.' in current_ui(), 'Camp progress save failed')

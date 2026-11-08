@@ -22,22 +22,31 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
-    def test_story_puzzle_survives_status_message_replacement(self):
+    def test_story_ready_survives_status_message_replacement(self):
         logs = (b'A01 story cue: kind=1 id=10037 serial=57\n'
-                b'A01 story: puzzle 10037. Tap original hotspots; Inventory selects items.\n'
+                b'A01 story ready: scene=10037 puzzle=1 inventory=[10020,10019]\n'
                 b'A01 interaction accepted at object 10021.\n')
-        self.assertTrue(smoke.story_puzzle_ready(logs, 10037))
+        self.assertTrue(smoke.story_puzzle_ready(logs, 10037, {10019, 10020}))
         self.assertFalse(smoke.story_puzzle_ready(logs, 10023))
+        self.assertFalse(smoke.story_puzzle_ready(logs, 10037, {10019}))
 
-    def test_story_puzzle_wait_requires_a_new_final_cue(self):
-        previous = b'A01 story cue: kind=1 id=10037 serial=57\n'
+    def test_story_ready_handles_same_scene_movie_completion_without_new_puzzle_cue(self):
+        # Torah and Gospels finish AN011/AN011B without entering another puzzle.
+        movie = b'A01 story cue: kind=2 id=11 serial=79\n'
+        ready = b'A01 story ready: scene=10037 puzzle=1 inventory=[10020,10019,10029,10027]\n'
+        self.assertFalse(smoke.story_puzzle_ready(movie, 10037))
+        self.assertTrue(smoke.story_puzzle_ready(movie+ready, 10037, {10019,10020,10027,10029}))
+        self.assertFalse(smoke.story_puzzle_ready(movie+ready, 10037, {10019,10020,10027,10028,10029}))
+
+    def test_story_ready_wait_requires_fresh_idle_state_after_media(self):
+        previous = b'A01 story ready: scene=10037 puzzle=1 inventory=[]\n'
         speech = (b'A01 story cue: kind=1 id=10037 serial=58\n'
                   b'A01 story cue: kind=3 id=11040 serial=59\n')
-        returned = b'A01 story cue: kind=1 id=10037 serial=60\n'
-        self.assertFalse(smoke.story_puzzle_ready(speech, 10037))
+        returned = b'A01 story ready: scene=10037 puzzle=1 inventory=[]\n'
+        self.assertFalse(smoke.story_puzzle_ready(previous+speech, 10037))
         self.assertFalse(smoke.story_puzzle_ready(b'', 10037))
         with patch.object(smoke, 'game_logs', side_effect=[previous, previous+speech, previous+speech+returned]) as logs, patch.object(smoke.time, 'sleep'):
-            smoke.wait_for_story_puzzle(10037, len(previous), 'did not return')
+            smoke.wait_for_story_puzzle(10037, len(previous), 'did not return', set())
             self.assertEqual(logs.call_count, 3)
 
     def test_puzzle_tap_includes_captured_android_status_bar_offset(self):

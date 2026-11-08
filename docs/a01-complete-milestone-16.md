@@ -56,6 +56,9 @@ The first published Actions runs on `0b80977` passed host tests, APK compilation
 
 The next runs on `b8ca35f` passed item pickup/combination and both camp conversations. Native logs confirm entry to card-table puzzle 10037 and acceptance of object 10021; the check nevertheless failed because its UI status had changed from the scene description to the interaction acknowledgement. Camp progression checks now require a new final puzzle cue after each action and reject intermediate speech/movie cues and earlier visits. Regression tests cover status replacement and stale/intermediate cues. The corrected complete emulator route remains pending; these observations do not establish that the later card/save/ending steps passed on Android.
 
+
+Runs on `3f36d80` then passed wrong-card feedback, the first four correct cards and card-progress save/restart/load. They stopped at Torah (10028): its verified handler consumes the card and plays AN011/AN011B without a new puzzle cue, leaving the table active. Requiring another puzzle cue was therefore incorrect. The native adapter now logs a bounded ready-for-input snapshot once after each cue sequence becomes idle, with the scene, puzzle flag and inventory IDs. The smoke test requires a fresh ready snapshot and checks the entire remaining inventory after the wrong card and every correct card. Same-scene movie completion and intermediate media are covered by regression tests. This adds diagnostics only; it does not alter game progression. The complete Android route is still pending Actions.
+
 ## Phone test
 
 1. Install the Actions APK over the existing app. Keep imported data and saves.
