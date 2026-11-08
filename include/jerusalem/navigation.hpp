@@ -14,7 +14,7 @@ struct Exit {
   std::uint32_t cursor,event;
   Camera arrival;
 };
-struct SceneAmbient { std::uint32_t node,sound,volume; std::string stem; };
+struct SceneAmbient { std::uint32_t node,sound,volume; std::string stem;std::uint32_t master=100; };
 struct ItemChannel { std::uint32_t node,channel; };
 struct Collectible {
   std::uint32_t id,node;

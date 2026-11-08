@@ -11,6 +11,7 @@ import time
 import xml.etree.ElementTree as ET
 import wave
 import uuid
+import zipfile
 
 PACKAGE = 'org.jerusalem.engine'
 OUTPUT = Path('smoke-output')
@@ -174,7 +175,7 @@ def click_scrolling(text):
     raise RuntimeError(f'Scrollable UI control not found: {text}')
 
 
-def click_menu(text):
+def click_menu(text, *, allow_sheet=True):
     """Menu actions remain reachable at phone font sizes and in landscape."""
     for direction in (1, -1):
         previous = None
@@ -182,6 +183,12 @@ def click_menu(text):
             xml = current_ui();center = control_center(xml, text)
             if center is not None:
                 adb('shell', 'input', 'tap', str(center[0]), str(center[1]));return
+            for node in ET.fromstring(xml).iter('node'):
+                if allow_sheet and node.get('class') == 'android.widget.Button' and node.get('content-desc', node.get('text', '')).casefold() == 'menu actions':
+                    sheet = control_center(ET.tostring(node), 'Menu actions')
+                    if sheet is not None:
+                        adb('shell', 'input', 'tap', str(sheet[0]), str(sheet[1]))
+                        click_menu(text, allow_sheet=False);return
             if xml == previous: break
             previous = xml
             for node in ET.fromstring(xml).iter('node'):
@@ -193,6 +200,26 @@ def click_menu(text):
                     adb('shell', 'input', 'swipe', str((x1+x2)//2), str(start), str((x1+x2)//2), str(end), '300');break
             else: raise RuntimeError(f'No menu scroll area while locating {text}')
     raise RuntimeError(f'Menu action not found: {text}')
+
+
+def verify_menu_geometry(xml):
+    """Check artwork/button alignment using original registrations as the oracle."""
+    nodes = list(ET.fromstring(xml).iter('node'))
+    stage = next((node for node in nodes if node.get('content-desc') == 'Original game menu'), None)
+    if stage is None: raise RuntimeError('Original menu view did not replace the fallback')
+    x1, y1, x2, y2 = map(int, re.findall(r'-?\d+', stage.get('bounds', '')))
+    scale = min((x2-x1)/640, (y2-y1)/480)
+    ox, oy = x1+((x2-x1)-640*scale)/2, y1+((y2-y1)-480*scale)/2
+    expected = [('New Game', 28, 433), ('Continue', 64, 469), ('Load Game', 100, 449), ('Save Game', 136, 437),
+                ('Settings', 242, 405), ('Visit', 278, 377), ('Encyclopedia', 314, 449), ('Intro', 350, 377),
+                ('Credits', 386, 377), ('Quit', 422, 373)]
+    for label, top, right in expected:
+        matches = [node for node in nodes if node.get('content-desc') == label]
+        if len(matches) != 1: raise RuntimeError(f'Menu entry missing or duplicated: {label}')
+        actual = list(map(int, re.findall(r'-?\d+', matches[0].get('bounds', ''))))
+        oracle = [ox+269*scale, oy+top*scale, ox+right*scale, oy+(top+36)*scale]
+        if len(actual) != 4 or any(abs(a-b)>2 for a, b in zip(actual, oracle)):
+            raise RuntimeError(f'Menu hit box is not aligned with artwork: {label}: {actual} vs {oracle}')
 
 
 def collect_diagnostics():
@@ -265,10 +292,12 @@ def synthetic_animated_aqc():
     return base + static + animated
 
 
-def synthetic_story_aqc():
+def synthetic_story_aqc(channels=4):
     base = synthetic_aqc()
     result = bytearray(base)
-    for index, left, top in ((0, 0, 0), (1, 4, 0), (0, 0, 2), (1, 4, 2)):
+    positions = ((0, 0, 0), (1, 4, 0), (0, 0, 2), (1, 4, 2))
+    for channel in range(channels):
+        index, left, top = positions[channel % 4]
         header = struct.pack('<III', 8, 4, 2) + base[16:32] + struct.pack('<6I', left, left+4, top, top+2, 16, 8)
         payload = int('0'+f'{index:013b}'+'11', 2).to_bytes(2, 'big')
         result += struct.pack('<IfII', 1, 0., 0, len(payload)) + header + payload
@@ -312,14 +341,15 @@ def synthetic_cinema(frames=3, preload_audio=False):
 def synthetic_stage_fixture(bitmap, pcm_wave):
     """Original-free fixtures exercise story callbacks; never represent game playback."""
     ids = (10999, 10000, 10001, 10002, 11000, 11002, 11004, 11005, 11008,
-           11011, 11012, 11013, 11014, 11015, 11016, 11017)
-    stage = 'JERUSALEM_A01_STAGE_V1\n'
+           11011, 11012, 11013, 11014, 11015, 11016, 11017, *range(11018, 11043))
+    stage = 'JERUSALEM_A01_STAGE_V2\n'
     for scene in (10045, 10016, 10017, 10018, 10039):
         stage += f'background {scene} SYNTH.BMP 0 16\n'
     for voice in ids:
         stage += f'dialogue {voice} A01 SYNTH_VOICE_{voice}\n'
     model = 'JERUSALEM_A01_NAV_V3\n'
-    files = {'a01-stage.tsv': stage.encode()}
+    stage += 'object 10018 \"Synthetic bowl\" \"SYNTH\"\n'
+    files = {'a01-stage.tsv': stage.encode(), 'KEYWORDS.INI': b'#1018\t1018\n11018\tSynthetic Hegira\n#11018\t1018\n11022\tSynthetic Allah\n'}
     for node in range(1, 7):
         model += f'node {1010100+node} STORY_NODE_{node} 4\n'
         files[f'STORY_NODE_{node}.aqc'] = synthetic_story_aqc()
@@ -333,10 +363,7 @@ def synthetic_stage_fixture(bitmap, pcm_wave):
     entry = name+bytes(243-len(name))+struct.pack('<III', 32+255, len(bitmap), len(bitmap))
     archive = b'ATIII'+bytes(3)+struct.pack('<III', 255, 1, 255)+bytes(12)+entry+bitmap
     files['data/A01.AT3'] = archive
-    entries = bytearray()
-    for entry_name in (b'\\bgr\\SYNTH.BMP', b'\\image\\MENU.BMP'):
-        entries += entry_name+bytes(243-len(entry_name))+struct.pack('<III', 32+510, len(bitmap), len(bitmap))
-    files['data/SY.AT3'] = b'ATIII'+bytes(3)+struct.pack('<III', 510, 2, 255)+bytes(12)+entries+bitmap
+    files['data/SY.AT3'] = synthetic_menu_archive(bitmap)
     for voice in ids:
         # The original opening is WAS on disc despite the executable naming WAC.
         extension = 'WAS' if voice == 10999 else 'WAC'
@@ -350,9 +377,107 @@ def synthetic_stage_fixture(bitmap, pcm_wave):
             audio_bytes = opening.getvalue()
         files[f'data/a01/sound/eng/SYNTH_VOICE_{voice}.{extension}'] = audio_bytes
         files[f'data/a01/dia/eng/SYNTH_VOICE_{voice}.DIA'] = b'0 Synthetic story speech\r\n400 END\r\n'
-    for movie in ('001', '002', '003', '004', '006', '007A', '007B', '007C', '009'):
+    for movie in ('001', '002', '003', '004', '006', '006B', '007A', '007B', '007C', '009', '010', '011', '011B', '013', '014'):
         files[f'data/a01/pla/eng/A01S01_AN{movie}.CI2'] = synthetic_cinema(3, preload_audio=True)
     return files
+
+
+# Generated menu fixtures exercise genuine dimensions/geometry without original pixels.
+MENU_HIGHLIGHTS = [('MEN1_H.BMP', 164), ('MEN2_H.BMP', 200), ('MENULOAD.BMP', 180),
+                   ('MENUSAVE.BMP', 168), ('MEN5_H.BMP', 136), ('MENUVISIT.BMP', 108),
+                   ('MENUENC.BMP', 180), ('MEN_INTRO.BMP', 112), ('MEN_CRED.BMP', 136), ('MEN7_H.BMP', 104)]
+
+
+def synthetic_menu_bitmap(width, height, rgb):
+    stride = (width*3+3)//4*4
+    pixels = (bytes(reversed(rgb))*width+bytes(stride-width*3))*height
+    return b'BM'+struct.pack('<IHHI', 54+len(pixels), 0, 0, 54)+struct.pack('<IiiHHIIiiII', 40, width, height, 1, 24, 0, len(pixels), 0, 0, 0, 0)+pixels
+
+
+def synthetic_menu_archive(bitmap, *, omitted=(), invalid=None, background=None):
+    if background is None: background = synthetic_menu_bitmap(640, 480, (71, 35, 19))
+    images = [(b'\\bgr\\SYNTH.BMP', bitmap), (b'\\image\\MENU.BMP', background)]
+    for i, (name, width) in enumerate(MENU_HIGHLIGHTS):
+        if name in omitted: continue
+        images.append((b'\\image\\'+name.encode(), synthetic_menu_bitmap(width, 39 if name == invalid else 40, (210, 160+i*5, 30))))
+    offset = 32+255*len(images);entries = bytearray();payload = bytearray()
+    for name, content in images:
+        entries += name+bytes(243-len(name))+struct.pack('<III', offset+len(payload), len(content), len(content))
+        payload += content
+    return b'ATIII'+bytes(3)+struct.pack('<III', len(entries), len(images), 255)+bytes(12)+entries+payload
+
+
+def puzzle_tap(x, y):
+    pattern = rb'A01 puzzle viewport: left=([-\d.]+) top=([-\d.]+) width=([-\d.]+) height=([-\d.]+)'
+    matches = re.findall(pattern, game_logs())
+    if not matches: raise RuntimeError('No native puzzle viewport for hit testing')
+    left, top, width, height = map(float, matches[-1])
+    adb('shell', 'input', 'tap', str(round(left+x*width/640)), str(round(top+y*height/480)))
+
+
+def full_a01_camp_smoke():
+    """The camp state is produced by host route tests; the Android app has no skip hook."""
+    adb('shell', 'am', 'force-stop', PACKAGE)
+    with zipfile.ZipFile('a01-smoke-fixture.zip') as archive:
+        total = 0
+        for info in archive.infolist():
+            total += info.file_size
+            if total > 64*1024*1024 or info.is_dir() or not re.fullmatch(r'[A-Za-z0-9_./-]+', info.filename) or any(part in ('', '..') for part in info.filename.split('/')):
+                raise RuntimeError('Invalid original-free fixture entry')
+            if info.filename.startswith('/'): raise RuntimeError('Absolute fixture entry')
+            target = 'native-saves/a01-story.jrs' if info.filename == 'camp.jrs' else 'game-data/'+info.filename
+            adb('shell', f'run-as {PACKAGE} mkdir -p files/{Path(target).parent}')
+            adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/{target}'", input=archive.read(info))
+    begin_log_phase();adb('shell', 'am', 'start', '-W', '-n', PACKAGE+'/.MainActivity')
+    wait_for(lambda: b'Ready.' in game_logs(), 'Full A01 fixture restart failed')
+    click_menu('Load Game');click('Manual save')
+    wait_for(lambda: b'Story session: action=load scene=10023' in game_logs(), 'Native camp fixture did not load')
+    wait_for(lambda: b'A01 puzzle viewport:' in game_logs(), 'Camp did not render')
+    puzzle_tap(140, 315) # Jug.
+    wait_for(lambda: b'A01 interaction accepted at object 10020' in game_logs(), 'Camp jug pickup failed')
+    puzzle_tap(305, 155) # Bowl.
+    wait_for(lambda: b'A01 interaction accepted at object 10018' in game_logs(), 'Camp bowl pickup failed')
+    click_scrolling('Inventory');click('Combine items');click('Synthetic item 10020');click('Synthetic item 10018')
+    wait_for(lambda: b'result=10019' in game_logs(), 'Bowl/jug combination did not produce full bowl')
+    for topic, finished in (('Synthetic Hegira', 11021), ('Synthetic Allah', 11024)):
+        click_scrolling('Talk');click(topic)
+        wait_for(lambda: f'A01 story cue: kind=3 id={finished}'.encode() in game_logs(), 'Camp topic dialogue chain did not finish')
+        # Require its final return, not an earlier visit to the same puzzle.
+        time.sleep(1)
+        wait_for(lambda: b'A01 story: puzzle 10023.' in current_ui(), 'Camp topic did not return control')
+    puzzle_tap(279, 221) # Card table.
+    wait_for(lambda: b'A01 story: puzzle 10037.' in current_ui(), 'Card-table access failed')
+    def use(item, x, y):
+        selection = f'Using Synthetic item {item}'.encode();count = game_logs().count(selection)
+        click_scrolling('Inventory');click('Use item');click(f'Synthetic item {item}')
+        wait_for(lambda: game_logs().count(selection) > count, 'Inventory item was not selected')
+        puzzle_tap(x, y)
+    use(10024, 500, 150) # Wrong card at Abraham: retain the bag and return.
+    wait_for(lambda: re.search(rb'A01 story cue: kind=3 id=1104[012]', game_logs()), 'Wrong card did not play its verified response')
+    wait_for(lambda: b'A01 story: puzzle 10037.' in current_ui(), 'Wrong card did not return to the table')
+    for i, (card, x) in enumerate(((10023, 500), (10025, 350), (10024, 200), (10026, 50), (10028, 350), (10029, 200), (10027, 50))):
+        use(card, x, 150)
+        time.sleep(1)
+        expected = 10023 if card == 10027 else 10037
+        wait_for(lambda: f'A01 story: puzzle {expected}.'.encode() in current_ui(), f'Card {card} did not finish')
+        if i == 0:
+            click_scrolling('Menu');click_menu('Save Game')
+            wait_for(lambda: b'Game saved.' in current_ui(), 'Camp progress save failed')
+            adb('shell', 'am', 'force-stop', PACKAGE);begin_log_phase()
+            adb('shell', 'am', 'start', '-W', '-n', PACKAGE+'/.MainActivity')
+            wait_for(lambda: b'Ready.' in game_logs(), 'Camp save restart failed')
+            click_menu('Load Game');click('Manual save')
+            wait_for(lambda: b'Story session: action=load scene=10037' in game_logs(), 'Card progress did not restore')
+            click_scrolling('Inventory')
+            inventory = current_ui()
+            if b'Synthetic item 10023' in inventory or b'Synthetic item 10024' not in inventory or b'Synthetic item 10019' not in inventory:
+                raise RuntimeError('Restored card/bowl inventory differs')
+            click('Close')
+    use(10019, 279, 221)
+    wait_for(lambda: b'A01 complete' in current_ui(), 'Final water gift did not reach the A01 ending', seconds=60)
+    click('Close')
+    (OUTPUT/'synthetic-a01-complete.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+    if b'A01 story stopped:' in game_logs(): raise RuntimeError('Full camp route emitted a runtime error')
 
 
 def main():
@@ -711,7 +836,14 @@ def main():
         adb('shell', 'am', 'force-stop', PACKAGE);begin_log_phase()
         adb('shell', 'am', 'start', '-W', '-n', PACKAGE + '/.MainActivity')
         wait_for(lambda: b'Ready.' in game_logs(), 'Menu restart failed')
-        wait_for(lambda: b'Menu artwork: size=2x2' in game_logs(), 'Imported menu artwork did not reach the Android menu')
+        wait_for(lambda: b'Menu artwork: size=640x480 highlights=10' in game_logs(), 'Imported menu artwork did not reach the Android menu')
+        wait_for(lambda: b'Original game menu' in current_ui(), 'Decoded artwork did not replace the menu fallback')
+        verify_menu_geometry(current_ui())
+        (OUTPUT / 'synthetic-original-menu.png').write_bytes(adb('exec-out', 'screencap', '-p'))
+        click_menu('Visit')
+        wait_for(lambda: b'not implemented yet' in current_ui(), 'Unimplemented original entry did not explain its status')
+        click('Close')
+        click_menu('Menu actions');click_menu('Settings');click('Cancel')
         click_menu('Load Game');click('Manual save')
         wait_for(lambda: b'Story session: action=load scene=1010105' in game_logs(),
                  'Manual story save did not restore after a process restart')
@@ -719,6 +851,10 @@ def main():
         click_scrolling('Menu');click_menu('Continue')
         wait_for(lambda: b'Inventory' in current_ui(), 'Continue did not return to the game')
         click_scrolling('Menu')
+        starts = game_logs().count(b'Story session: action=new')
+        click_menu('New Game');click('Cancel')
+        if game_logs().count(b'Story session: action=new') != starts:
+            raise RuntimeError('Cancelling New Game restarted the current session')
         # A bad manual save must leave the active game resumable.
         adb('shell', f"run-as {PACKAGE} sh -c 'cat > files/native-saves/a01-story.jrs'", input=b'bad story save')
         click_menu('Load Game');click('Manual save')
@@ -726,7 +862,7 @@ def main():
         click_menu('Continue')
         wait_for(lambda: b'Inventory' in current_ui(), 'Failed load damaged the active session')
 
-        click_scrolling('Menu');begin_log_phase();click_menu('New Game')
+        click_scrolling('Menu');begin_log_phase();click_menu('New Game');click('Restart')
         wait_for(lambda: b'Audio buffer drained: SYNTH_VOICE_10999' not in game_logs() and b'Dialogue started: id=10999' in game_logs(),
                  'Opening speech did not become active for save testing')
         click_scrolling('Menu');click_menu('Save Game')
@@ -738,7 +874,8 @@ def main():
                  'Restored speech/movie sequence did not return to node 1')
         if game_logs().count(b'A01 story cue: kind=2 id=2 ') != 1:
             raise RuntimeError('Restored speech fired its completion callback more than once')
-        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, main menu and original-data setup entry, separate developer tools, manual story save/load across process restart, failed-load preservation, mid-speech resume with exactly one completion callback, story opening / encounter / puzzle callbacks using synthetic assets, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
+        full_a01_camp_smoke()
+        (OUTPUT / 'result.txt').write_text('PASS: x86_64 native launch, JNI inspection, synthetic BMP/AQC display, AQC camera rendering and drag redraw, channel preview frame advancement/stop, synthetic scene traversal, item hit priority/pickup/variable update and inventory display, native checkpoint restoration after process restart and corrupt-load state preservation, reverse-order inventory combination through native dialogs and result restoration, assignment pickup/character offer and revision-3 persistence, DIA subtitle advancement, native CNM movie frames and stereo PCM with streamed/preloaded soundtrack layouts, main menu and original-data setup entry, separate developer tools, manual story save/load across process restart, failed-load preservation, mid-speech resume with exactly one completion callback, story opening / encounter / puzzle callbacks using synthetic assets, full camp topic/bowl/card/ending sequence from a host-generated save and card-progress save/restart/load, concurrent looping ambient refill and scene volume changes, disabled-route/puzzle boundaries, readable localization text, stereo PCM output-buffer consumption and replay, native synthetic WAC/WAS decoding and output-buffer consumption.\nThis does not verify audible sound through a physical speaker. ARM64 hardware and original asset playback remain separate validation gates.\n')
     finally:
         collect_diagnostics()
 

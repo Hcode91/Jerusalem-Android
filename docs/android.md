@@ -1,3 +1,7 @@
+# Current A01 build
+
+For the original menu and full A01 progression, use the [current installation and phone walkthrough](a01-complete-milestone-16.md#phone-test). Refresh connections through Game data → Set up game after updating. The older inspector instructions below remain useful for asset tools.
+
 # Android app and CI
 
 ## Build and install

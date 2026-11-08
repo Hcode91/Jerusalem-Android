@@ -6,6 +6,7 @@
 #include "jerusalem/cinema.hpp"
 #include "jerusalem/dialogue.hpp"
 #include "jerusalem/stage.hpp"
+#include "jerusalem/menu.hpp"
 #include <fstream>
 #include <iostream>
 #include <iomanip>
@@ -13,7 +14,7 @@
 int main(int argc,char** argv) {
   using namespace jerusalem;
   if (argc<3) {
-    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|dia|cinema|extract-cinema|cinema-raw|extract-cinema-audio|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|extract-a01-stage|stage|stage-art|checkpoint FILE [NEW_OUTPUT_PATH]\n";
+    std::cerr << "Usage: jinspect describe|inspect|cue|ini|localized|dan|dia|cinema|extract-cinema|cinema-raw|extract-cinema-audio|at3|decode-audio|decode-aqc|aqc-channels|extract-aqc-channels|render-panorama|map-panorama|extract-media|extract-at3|extract-a01-navigation|extract-a01-stage|stage|stage-art|menu|keywords|story-tags|story-checkpoint|checkpoint FILE [NEW_OUTPUT_PATH]\n";
     return 2;
   }
   try {
@@ -62,6 +63,29 @@ int main(int argc,char** argv) {
     }
     else if(mode=="stage") {
       const auto setup=parse_stage(text);std::cout<<setup.backgrounds.size()<<" backgrounds, "<<setup.access.size()<<" hotspots, "<<setup.layers.size()<<" layers, "<<setup.dialogues.size()<<" voice bindings\n";
+    }
+    else if(mode=="story-checkpoint") {
+      if(argc!=6)throw ParseError("story-checkpoint NAVIGATION STAGE GAME_ROOT SAVE");
+      const auto graph=parse_navigation(text);const auto raw=read_file(argv[3]);const auto setup=parse_stage(std::string(raw.begin(),raw.end()));
+      const auto tags=a01_story_assets(graph,setup,argv[4]);InteractionState items(graph);A01Story story(setup,graph,items);
+      const auto state=read_file(argv[5]);story.load(Bytes(state),tags.current,tags.legacy);
+      std::cout<<"Story scene="<<story.scene()<<" finished="<<story.finished()<<" inventory="<<items.inventory().size()<<'\n';
+    }
+    else if(mode=="story-tags") {
+      if(argc!=5)throw ParseError("story-tags NAVIGATION STAGE GAME_ROOT");
+      const auto stage=read_file(argv[3]);const auto tags=a01_story_assets(parse_navigation(text),parse_stage(std::string(stage.begin(),stage.end())),argv[4]);
+      std::cout<<tags.current<<' '<<tags.legacy<<'\n';
+    }
+    else if(mode=="keywords") {
+      const auto groups=parse_keywords(text);std::cout<<groups.size()<<" topic groups\n";
+      for(const auto& group:groups)for(const auto& topic:group.topics)std::cout<<group.id<<'\t'<<group.root<<'\t'<<topic.id<<'\t'<<topic.text<<'\n';
+    }
+    else if(mode=="menu") {
+      const auto menu=load_menu_art(StageArt(std::move(data)));
+      std::cout<<"Original menu: "<<menu.background.width<<'x'<<menu.background.height<<", "<<10-menu.warnings.size()<<" highlights\n";
+      const auto& entries=original_menu_entries();
+      for(const auto& entry:entries)std::cout<<entry.object<<'\t'<<entry.label<<'\t'<<entry.left<<','<<entry.top<<','<<entry.right<<','<<entry.bottom<<'\t'<<entry.highlight<<'\n';
+      for(const auto& warning:menu.warnings)std::cout<<"Warning: "<<warning<<'\n';
     }
     else if(mode=="stage-art") {
       if(argc!=5 || std::filesystem::exists(argv[4]))throw ParseError("stage-art ARCHIVE BASENAME NEW_OUTPUT.pam");

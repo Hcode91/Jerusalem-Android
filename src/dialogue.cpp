@@ -1,6 +1,7 @@
 #include "jerusalem/dialogue.hpp"
 #include <algorithm>
 #include <sstream>
+#include <set>
 namespace jerusalem {
 namespace {
 std::string utf8(const std::string& bytes) {
@@ -49,6 +50,35 @@ DialogueText parse_dia(const std::string& bytes) {
   if(!ended)throw ParseError("truncated DIA: missing terminal END");
   return result;
 }
+std::vector<TopicGroup> parse_keywords(const std::string& bytes) {
+  if(bytes.empty() || bytes.size()>1024*1024 || bytes.find('\0')!=std::string::npos)throw ParseError("invalid keywords text");
+  std::vector<TopicGroup> groups;std::set<std::uint32_t> ids;std::istringstream lines(bytes);std::string line;
+  const auto number=[](const std::string& text){
+    if(text.empty() || text.size()>9)throw ParseError("invalid topic number");
+    std::uint32_t value=0;for(char c:text){if(c<'0'||c>'9')throw ParseError("invalid topic number");value=value*10+unsigned(c-'0');}
+    if(!value)throw ParseError("zero topic ID");
+    return value;
+  };
+  while(std::getline(lines,line)){
+    if(!line.empty() && line.back()=='\r')line.pop_back();
+    if(line.find_first_not_of(" \t")==std::string::npos)continue;
+    if(line.size()>4096)throw ParseError("topic line limit");
+    std::vector<std::string> fields;std::istringstream row(line);std::string field;
+    while(std::getline(row,field,'\t'))fields.push_back(field);
+    if(line[0]=='#'){
+      if(fields.size()!=2 || groups.size()>=1024)throw ParseError("invalid topic group");
+      const auto id=number(fields[0].substr(1));if(!ids.insert(id).second)throw ParseError("duplicate topic group");
+      groups.push_back({id,number(fields[1]),{}});
+    }else{
+      if(groups.empty() || (fields.size()!=2 && fields.size()!=3) || groups.back().topics.size()>=128 || fields[1].empty())throw ParseError("invalid topic entry");
+      const auto id=number(fields[0]);for(const auto& entry:groups.back().topics)if(entry.id==id)throw ParseError("duplicate topic entry");
+      if(fields.size()==3 && fields[2]!="1")throw ParseError("unsupported topic flag");
+      groups.back().topics.push_back({id,utf8(fields[1]),fields.size()==3});
+    }
+  }
+  if(groups.empty())throw ParseError("keywords contain no groups");
+  return groups;
+}
 std::string subtitle_at(const DialogueText& text,std::uint64_t time) {
   // The original chooses the first inclusive interval; the earlier cue wins at equality.
   for(std::size_t i=0;i<text.cues.size();++i)if(text.cues[i].time_ms<=time && time<=(i+1<text.cues.size()?text.cues[i+1].time_ms:text.end_ms))return text.cues[i].text;
@@ -77,6 +107,9 @@ DialogueFiles resolve_dialogue(const std::filesystem::path& root,const DialogueR
     }
   }
   if(!audio)throw ParseError("missing dialogue audio: "+d.stem+" (expected WAC, WAS or WAV in "+sound.string()+")");
-  return {*audio,child(dia,d.stem+".DIA",false)};
+  std::optional<std::filesystem::path> animation;
+  try{animation=child(dia,d.stem+".DAN",false);}
+  catch(const ParseError& e){if(std::string(e.what()).find("missing dialogue data:")!=0)throw;}
+  return {*audio,child(dia,d.stem+".DIA",false),animation};
 }
 }

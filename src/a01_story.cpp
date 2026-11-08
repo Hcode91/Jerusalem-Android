@@ -1,7 +1,7 @@
 #include "jerusalem/stage.hpp"
 #include <algorithm>
 namespace jerusalem {
-A01Story::A01Story(StageSetup setup,SceneGraph graph,InteractionState& items):setup_(std::move(setup)),graph_(std::move(graph)),items_(items) {
+A01Story::A01Story(StageSetup setup,SceneGraph graph,InteractionState& items,std::uint32_t seed):setup_(std::move(setup)),graph_(std::move(graph)),items_(items),random_(seed) {
   if(!items_.history().empty() || !items_.inventory().empty())throw ParseError("story requires a fresh inventory");
   for(const auto& n:graph_.nodes)channels_[n.id].resize(n.channels,false);
   for(const auto& a:setup_.access)enabled_.push_back(a.enabled);
@@ -39,14 +39,39 @@ bool A01Story::complete(std::uint64_t serial){
     case 10002:push(StoryCue::Node,1010106);show(10014,0,true);deadline_=clock_+60000;break;
     case 11004:push(StoryCue::Speech,11005);break;
     case 11005:push(StoryCue::Node,1010105,"",{24,0,87});break;
-    case 11002:push(StoryCue::Movie,6,"A01S01_AN006");push(StoryCue::Puzzle,10043);break;
+    case 11002:push(StoryCue::Movie,6,random_choice(2)==0?"A01S01_AN006B":"A01S01_AN006");push(StoryCue::Puzzle,10043);break;
     case 11011:bag_cleared_=true;items_.inventory_.clear();push(StoryCue::Puzzle,10021);push(StoryCue::Speech,11012);break;
     case 11012:push(StoryCue::Movie,9,"A01S01_AN009");push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11013);break;
     case 11013:push(StoryCue::Speech,11014);break;
     case 11014:push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11015);break;
     case 11015:push(StoryCue::Speech,11016);break;
     case 11016:push(StoryCue::Puzzle,10026);push(StoryCue::Speech,11017);break;
-    case 11017:push(StoryCue::Puzzle,10023);push(StoryCue::Boundary,10023,"First escape complete. The next conversation/topic puzzle is not implemented yet.");break;
+    case 11017:camp_=true;push(StoryCue::Puzzle,10023);break;
+    case 11018:show(10032,0,false);push(StoryCue::Puzzle,10035);push(StoryCue::Speech,11019);break;
+    case 11019:push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11020);break;
+    case 11020:push(StoryCue::Puzzle,10026);push(StoryCue::Speech,11021);break;
+    case 11021:push(StoryCue::Puzzle,10023);break;
+    case 11022:push(StoryCue::Puzzle,10032);push(StoryCue::Speech,11023);break;
+    case 11023:push(StoryCue::Movie,10,"A01S01_AN010");push(StoryCue::Puzzle,10026);push(StoryCue::Speech,11024);break;
+    case 11024:
+      cards_given_=true;for(auto id:{10026U,10024U,10025U,10023U,10027U,10028U,10029U})bag_add(id);
+      enable(10021,true);all(10021,true);push(StoryCue::Puzzle,10023);break;
+    case 11025:show(10032,1,false);push(StoryCue::Puzzle,10037);break;
+    case 11026:case 11027:case 11028:case 11041:case 11042:
+      if(cue.id>=11041)push(StoryCue::Movie,14,"A01S01_AN014");
+      push(StoryCue::Puzzle,10037);break;
+    case 11029:push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11030);break;
+    case 11030:push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11031);break;
+    case 11031:push(StoryCue::Puzzle,10026);push(StoryCue::Speech,11032);break;
+    case 11032:show(10032,2,true);push(StoryCue::Puzzle,10035);push(StoryCue::Speech,11033);break;
+    case 11033:show(10032,2,false);push(StoryCue::Puzzle,10023);break;
+    case 11034:push(StoryCue::Puzzle,10040);push(StoryCue::Speech,11035);break;
+    case 11035:push(StoryCue::Movie,13,"A01S01_AN013");push(StoryCue::Puzzle,10032);push(StoryCue::Speech,11036);break;
+    case 11036:push(StoryCue::Puzzle,10031);push(StoryCue::Speech,11037);break;
+    case 11037:show(10032,1,true);push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11038);break;
+    case 11038:show(10032,1,false);push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11039);break;
+    case 11039:finished_=true;push(StoryCue::Boundary,2,"A01 complete. The original game continues in A02; A02 gameplay is not implemented yet.");break;
+    case 11040:show(10032,3,false);push(StoryCue::Movie,14,"A01S01_AN014");push(StoryCue::Puzzle,10037);break;
     default:break;
   }
   return true;
@@ -94,6 +119,45 @@ bool A01Story::activate(std::uint32_t object,std::uint32_t event,std::optional<s
   const auto active=hotspots();
   if(std::none_of(active.begin(),active.end(),[&](const StageAccess& h){return h.object==object && h.event==event;}))return false;
   if(item && (*item==10010 ? local_item()!=10010 : !items_.owns(*item)))return false;
+  if(camp_) {
+    if(object==10014 && event==0 && !item)return !topics().empty();
+    if(object==10018 && event==0 && bowl_==0){
+      // The original handler adds the empty bowl even on a jug-use attempt.
+      // Filling the inventory bowl is the separate BagCombine operation.
+      all(10018,false);enable(10018,false);bowl_=1;bag_add(10018);return true;
+    }
+    if(object==10020 && event==0 && !jug_){all(10020,false);enable(10020,false);jug_=true;bag_add(10020);return true;}
+    if(object==10021){
+      if(!item && event==0){push(StoryCue::Puzzle,10037);return true;}
+      if(!item && event==1){push(StoryCue::Puzzle,10023);return true;}
+      if(item==10019 && event==2 && cards_used_==127 && bowl_==2){
+        all(10021,false);all(10019,true);bag_remove(10019);bowl_=3;
+        push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11034);return true;
+      }
+    }
+    if(object>=10023 && object<=10029 && item && *item>=10023 && *item<=10029 && cards_given_) {
+      push(StoryCue::Movie,11,random_choice(2)==0?"A01S01_AN011B":"A01S01_AN011");
+      if(object!=*item){
+        const unsigned choice=random_choice(3);
+        if(choice==0){show(10032,3,true);push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11040);}
+        else{push(StoryCue::Puzzle,choice==1?10032:10035);push(StoryCue::Speech,choice==1?11041:11042);}
+        return true;
+      }
+      all(object,true);bag_remove(object);cards_used_|=1U<<(object-10023);
+      if(object!=10027)enable(object,false);
+      switch(object){
+        case 10023:enable(10025,true);show(10032,1,true);push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11025);break;
+        case 10025:enable(10024,true);push(StoryCue::Puzzle,10032);push(StoryCue::Speech,11026);break;
+        case 10024:enable(10026,true);push(StoryCue::Puzzle,10026);push(StoryCue::Speech,11027);break;
+        case 10026:enable(10028,true);push(StoryCue::Puzzle,10025);push(StoryCue::Speech,11028);break;
+        case 10028:enable(10029,true);break;
+        case 10029:enable(10027,true);break;
+        case 10027:access(10021,0,false);access(10021,2,true);push(StoryCue::Puzzle,10031);push(StoryCue::Speech,11029);break;
+      }
+      return true;
+    }
+    return false;
+  }
   if(object==10000 && event==0 && item && (*item==10002 || *item==10004 || *item==10017)){push(StoryCue::Speech,11000);return true;}
   if(object==10007){
     if(item && *item==10003 && event==0){
@@ -140,4 +204,43 @@ std::optional<std::uint32_t> A01Story::local_item() const {
   for(std::size_t i=0;i<setup_.access.size();++i)if(setup_.access[i].object==10010 && enabled_[i])return 10010;
   return {};
 }
+void A01Story::bag_add(std::uint32_t id){if(!items_.owns(id))items_.inventory_.push_back(id);}
+void A01Story::bag_remove(std::uint32_t id){auto& bag=items_.inventory_;bag.erase(std::remove(bag.begin(),bag.end(),id),bag.end());}
+unsigned A01Story::random_choice(unsigned n){random_=random_*214013U+2531011U;return ((random_>>16)&32767U)*n/32768U;}
+std::optional<std::uint32_t> A01Story::combine(std::uint32_t first,std::uint32_t second){
+  if(busy() || failed_ || boundary_)return {};
+  if(!camp_)return items_.combine(first,second);
+  if(bowl_!=1 || !jug_ || !items_.owns(first) || !items_.owns(second) ||
+     !((first==10018 && second==10020)||(first==10020 && second==10018)))return {};
+  bag_remove(10018);bag_add(10019);bowl_=2;return 10019;
+}
+std::vector<std::uint32_t> A01Story::topics() const {
+  if(!camp_ || busy() || failed_ || boundary_ || scene_!=10023)return {};
+  if(topics_==0)return {11018};
+  if(topics_==1)return {11022};
+  return {};
+}
+bool A01Story::choose_topic(std::uint32_t id){
+  const auto available=topics();if(std::find(available.begin(),available.end(),id)==available.end())return false;
+  topics_|=id==11018?1U:2U;
+  if(id==11018)show(10032,0,true);
+  push(StoryCue::Puzzle,10027);push(StoryCue::Speech,id);return true;
+}
+std::string A01Story::item_name(std::uint32_t id) const {
+  for(const auto& o:setup_.objects)if(o.id==id && !o.name.empty())return o.name;
+  return inventory_name(items_.graph_,id);
+}
+void A01Story::clear_speech_animation(const Dan& d){for(const auto& level:d.levels)show(level.second,level.third,false);}
+void A01Story::speech_animation(const Dan& d,std::uint64_t time){
+  if(!playing_ || playing_->kind!=StoryCue::Speech)return;
+  std::optional<std::pair<std::uint32_t,std::uint32_t>> active;
+  for(const auto& range:d.intervals)if(range.first<=time && time<=range.second){
+    for(const auto& level:d.levels)if(range.third && level.first==range.third){active={{level.second,level.third}};break;}
+    break;
+  }
+  for(const auto& level:d.levels){const std::pair<std::uint32_t,std::uint32_t> key{level.second,level.third};const bool on=active && *active==key;
+    if(bool(shown_.count(key))!=on)show(level.second,level.third,on);
+  }
+}
+
 }

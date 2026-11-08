@@ -1,6 +1,6 @@
 # Jerusalem native engine research
 
-An independent C++17 engine reimplementation with an SDL2 desktop panorama viewer and SDL3 Android inspector for **Jerusalem: The 3 Roads to the Holy Land**. The current build provides **asset inspection and an A01 traversal preview**, not a playable game. No Windows compatibility layer is used. No original binaries, game art, audio, or proprietary samples are distributed.
+An independent C++17 engine reimplementation with an SDL2 desktop panorama viewer and SDL3 Android inspector for **Jerusalem: The 3 Roads to the Holy Land**. The current runtime implements **A01 progression from the opening through the camp puzzles and the area ending**, alongside asset inspection. New Android validation is pending. The complete game remains unfinished. No Windows compatibility layer is used. No original binaries, game art, audio, or proprietary samples are distributed.
 
 ## Implemented
 
@@ -19,7 +19,7 @@ An independent C++17 engine reimplementation with an SDL2 desktop panorama viewe
 - Native SDL3 Android entry point, rendering and audio backends, inspector scene, touch image panning, zoom controls, lifecycle audio pause/resume, diagnostics, and Android Storage Access Framework folder import.
 - Parser regression tests, truncation checks, deterministic malformed-input tests, and an ARM64 debug APK GitHub Actions workflow.
 
-The latest milestone adds a **main menu, Continue, manual story saves/autosaves, settings and a separate Developer Tools view**. It resumes supported movies/speech and preserves the first-escape puzzle state, inventory and countdown. Original menu art is decoded from user-supplied data, and the newly verified alpha compositor renders the next camp scene. **The camp interactions and full A01 ending remain unfinished.** See [menu/save behavior, evidence and phone tests](docs/menu-story-saves-milestone-14.md). Android build/device validation for this milestone remains pending.
+The latest implementation combines the [original main menu](docs/original-menu-milestone-15.md) with [complete A01 progression, save migration and phone tests](docs/a01-complete-milestone-16.md). It adds camp topics, bowl/jug use, seven-card matching, wrong responses, original puzzle ambience, supported speech animation and the final A02 handoff. Existing version-1 camp saves migrate into the playable camp. Full-area models require one refresh through Game data → Set up game. **APK/emulator/ARM64 phone validation of these changes is pending.** Four optional DAN tracks and several presentation details remain fidelity work; A02 gameplay is not implemented. No original assets are bundled.
 
 The progressive C++ Cinema decoder still matches all 367 frames of three complete original movies byte-for-byte. SDL2 has a desktop movie player, and host tools export PNG frames and stereo WAV tracks. See [Cinema format evidence](docs/a01-story-cinema-milestone-12.md).
 
@@ -36,6 +36,7 @@ cmake -S . -B build-host -DJERUSALEM_SANITIZE=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build-host --parallel 2
 ctest --test-dir build-host --output-on-failure
 build-host/jinspect at3 /path/to/a01.at3
+build-host/jinspect menu /path/to/SY.AT3
 build-host/jinspect localized /path/to/aObj.ini
 build-host/jinspect describe /path/to/aObj.ini
 build-host/jinspect dan /path/to/clip.dan
@@ -62,16 +63,11 @@ Keep legally obtained files outside the repository, or under the ignored `privat
 
 ## Build status
 
-Current host validation passes all eight CTest groups with AddressSanitizer and UndefinedBehaviorSanitizer, 4000 deterministic malformed-input rounds, 46 Python regressions, 30 panorama checks, 233 animation checks, 119 navigation/scene-audio checks and 171 interaction checks and 403 checkpoint checks. Fifteen original WAC/WAS outputs match original decoder instructions after documented container normalization. A01 extraction matches original node/exit and 17 ambient-binding captures; volume arithmetic matches 303 original routine cases. Audio, original static images, the 360 camera, animation inspection, A01 traversal and automatic scene audio/background-resume and all three pickups/inventory have been confirmed on the user's Android device. The new checkpoint save/load and expanded emulator checks await Actions/device results; APKs are built only in Actions. Story/dialogue playback, inventory use/combinations, puzzles and original Windows saves remain unimplemented.
+All ten current host CTest groups pass with AddressSanitizer and UndefinedBehaviorSanitizer. Original asset decoding, 360 camera, animations, A01 traversal, inventory, save/load and the previous native menu have been confirmed on the user's Android device. The original menu and full A01 implementation have passed host tests and source checks; their APK/emulator/phone validation is pending. APKs and emulator tests run only in Actions. The camp and A01 ending now pass host route tests; later-area gameplay remains unfinished.
 
 ## Roadmap
 
-1. Run the workflow in the intended GitHub repository, fix CI failures, and verify launch/import on an ARM64 device.
-2. Complete A01 and system AT3 archives have been extracted, and all 30 Disc 1 standard WAVs parse successfully. Verify original sound playback on device and reverse the Cinema image payloads.
-3. The camera works on device. AQC patch frames now decode with explicit inspection preview; resolve the remaining channel variant and original activation/clock settings before integrating ambient scene animation.
-4. Reverse Cinema/CI2 frame tables. Expand the verified WAC/WAS audio corpus and check native compressed-audio playback on device.
-5. Trace scene activation, node transitions, hotspots, object IDs, dialogue triggers, and puzzle logic. Build the corresponding runtime only from established semantics.
-6. Expand versioned native checkpoints as more game state is verified. Original `.ars` saves remain unsupported.
+See the [milestone completion roadmap](docs/port-roadmap.md). Next: validate the original menu and full A01 build on Android, resolve remaining fidelity issues, then expand shared systems and complete the remaining areas. At each milestone, report evidence and limits and check with the user before committing/publishing or continuing.
 
 ## Licence and data
 

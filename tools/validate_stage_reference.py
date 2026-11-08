@@ -10,6 +10,7 @@ from collections import Counter
 import json
 from pathlib import Path
 import struct
+import shlex
 from validate_navigation_reference import capture, ARITIES
 
 
@@ -19,23 +20,26 @@ def validate(executable, model):
                     0x42a000: 1, 0x42a080: 9, 0x42a170: 12, 0x42a270: 4,
                     0x42a390: 7, 0x42a5c0: 4, 0x42a610: 4})
     calls, read = capture(executable, 0x47cea0, 0x47f01b, arities)
-    def name(address):
+    def name(address, upper=True):
+        if address==0x4d0518:return ''
         raw = bytearray()
         for i in range(96):
             c = read(address+i, 1)
-            if c == b'\0': return raw.decode('ascii').upper()
+            if c == b'\0': return raw.decode('ascii').upper() if upper else raw.decode('ascii')
             raw += c
         raise ValueError('unbounded string')
     def signed(v): return v if v < 2**31 else v-2**32
     def real(v): return struct.unpack('<f', struct.pack('<I', v))[0]
     rows = model.splitlines()
-    if rows.pop(0) != 'JERUSALEM_A01_STAGE_V1': raise ValueError('unsupported stage model')
-    actual = Counter(tuple(line.split()) for line in rows if line and not line.startswith('dialogue '))
+    if rows.pop(0) not in ('JERUSALEM_A01_STAGE_V1','JERUSALEM_A01_STAGE_V2'): raise ValueError('unsupported stage model')
+    actual = Counter(tuple(shlex.split(line)) for line in rows if line and not line.startswith(('dialogue ', 'sound ')))
     expected = Counter()
     indices = Counter()
     for target, a in calls:
         row = None
-        if target == 0x42af00:
+        if target == 0x429700:
+            row = ('object', a[0], name(a[1], False), name(a[2]))
+        elif target == 0x42af00:
             row = ('background', a[0], name(a[1]), signed(a[2]), signed(a[3]))
         elif target in (0x429ac0, 0x429c20):
             row = ('access', a[0], a[1], indices[a[0]], int(target == 0x429c20), a[6],
@@ -96,10 +100,26 @@ def validate_escape_effects(executable):
                 scope='original media/puzzle/speech requests for palm escape, both successful projectiles, and both wrong targets')
 
 
+def validate_puzzle_sounds(executable, model):
+    calls, read = capture(executable, 0x47f01b, 0x47faa9,
+                          {0x42c8d0: 7, 0x42cd50: 2, 0x42b4a0: 7, 0x42c040: 7}, cdecl=(0x42cd50,))
+    names = {};masters = {};expected = Counter()
+    for target, args in calls:
+        if target == 0x42c8d0 and args[1] == 2:
+            names[args[0]] = read(args[2], 64).split(b'\0', 1)[0].decode('ascii').upper()[:-4]
+        if target == 0x42cd50: masters[args[0]] = args[1]
+        if target == 0x42b4a0:
+            expected[tuple(map(str, ('sound', args[0], args[1], args[2], masters[args[1]], names[args[1]])))] += 1
+    actual = Counter(tuple(shlex.split(line)) for line in model.splitlines() if line.startswith('sound '))
+    if actual != expected: raise ValueError('puzzle sound names, gains or bindings differ')
+    return dict(puzzle_sound_bindings=sum(expected.values()), matches=True)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable', type=Path); parser.add_argument('model', type=Path)
     args = parser.parse_args()
     result = validate(args.executable.read_bytes(), args.model.read_text())
     result['escape'] = validate_escape_effects(args.executable.read_bytes())
+    result['puzzle_sounds'] = validate_puzzle_sounds(args.executable.read_bytes(), args.model.read_text())
     print(json.dumps(result, indent=2))

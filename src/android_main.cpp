@@ -8,6 +8,7 @@
 #include "jerusalem/dialogue.hpp"
 #include "jerusalem/cinema.hpp"
 #include "jerusalem/stage.hpp"
+#include "jerusalem/menu.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -31,14 +32,15 @@ std::mutex bridge_mutex;
 std::string pending_path;
 std::string diagnostic="Native inspector starting. No game scene has been decoded.";
 unsigned commands=0;
-std::atomic<bool> menu_paused{true},show_hotspots{true},developer_tools{false};
+std::atomic<bool> menu_paused{true},show_hotspots{true},developer_tools{false},topic_requested{false},game_menu_requested{false};
 std::atomic<unsigned> game_flags{0},master_volume{100},viewport_bottom{156};
 std::string game_result;
 std::uint64_t game_result_serial=0;
 void result(const std::string& action,bool success){std::lock_guard<std::mutex> guard(bridge_mutex);game_result=std::to_string(++game_result_serial)+":"+action+":"+(success?"ok":"error");}
 std::vector<std::pair<std::uint32_t,std::uint32_t>> pending_combinations;
 std::string inventory_options,subtitle_report;
-std::uint32_t pending_use=0;
+std::uint32_t pending_use=0,pending_topic=0;
+std::string topic_options;
 std::string inventory_report="Start A01 navigation to inspect the pickup inventory.";
 
 void report(const std::string& text) {
@@ -253,7 +255,7 @@ class SceneAmbience {
     for (auto& item:prepared) voices_.emplace(item.first,std::move(item.second));
     for (const auto& binding:bindings) {
       auto& voice=*voices_.at(binding.sound);
-      if (!SDL_SetAudioStreamGain(voice.stream.get(),(voice.gain=static_cast<float>(jerusalem::ambient_gain(binding.volume)))*master_volume.load()/100.0f) ||
+      if (!SDL_SetAudioStreamGain(voice.stream.get(),(voice.gain=static_cast<float>(jerusalem::ambient_gain(binding.volume,binding.master)))*master_volume.load()/100.0f) ||
           !(paused_?SDL_PauseAudioStreamDevice(voice.stream.get()):SDL_ResumeAudioStreamDevice(voice.stream.get()))) throw jerusalem::ParseError(std::string("Scene audio gain/start: ")+SDL_GetError());
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Scene audio active: %s volume=%u",voice.path.filename().string().c_str(),binding.volume);
     }
@@ -280,6 +282,7 @@ class Renderer {
   std::vector<jerusalem::StageAccess> puzzle_markers_;
   int width_=0,height_=0;
   float zoom_=1,pan_x_=0,pan_y_=0;
+  SDL_FRect logged_puzzle_rect_{};
   std::string preview_;
  public:
   ~Renderer() {
@@ -291,6 +294,7 @@ class Renderer {
   bool init() { return SDL_CreateWindowAndRenderer("Jerusalem",1280,720,SDL_WINDOW_RESIZABLE,&window_,&renderer_); }
   void game_mode(bool on){game_mode_=on;}
   void clear_image() {
+    logged_puzzle_rect_={};
     if (texture_) SDL_DestroyTexture(texture_);
     if (camera_texture_) SDL_DestroyTexture(camera_texture_);
     texture_=camera_texture_=nullptr; panorama_={}; camera_mode_=false;
@@ -435,6 +439,9 @@ class Renderer {
         SDL_FRect dst{(float(w)-float(width_)*scale)/2+pan_x_*float(w),
                       64+(float(h-64-bottom)-float(height_)*scale)/2+pan_y_*float(h),float(width_)*scale,float(height_)*scale};
         SDL_RenderTexture(renderer_,texture_,nullptr,&dst);
+        if(game_mode_ && (dst.x!=logged_puzzle_rect_.x || dst.y!=logged_puzzle_rect_.y || dst.w!=logged_puzzle_rect_.w || dst.h!=logged_puzzle_rect_.h)){
+          logged_puzzle_rect_=dst;__android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 puzzle viewport: left=%.3f top=%.3f width=%.3f height=%.3f",dst.x,dst.y,dst.w,dst.h);
+        }
         if(!game_mode_ || developer_tools.load() || show_hotspots.load())for(const auto& a:puzzle_markers_){const float x=dst.x+(a.left+a.right)*0.5f*scale,y=dst.y+(a.top+a.bottom)*0.5f*scale;
           SDL_SetRenderDrawColor(renderer_,90,200,255,255);SDL_FRect mark{x-12,y-12,24,24};SDL_RenderRect(renderer_,&mark);SDL_RenderDebugText(renderer_,x+15,y-4,((a.cursor==61?std::string("ACT "):std::string("USE "))+(game_mode_&&!developer_tools.load()?std::string{}:std::to_string(a.object))).c_str());}
       }
@@ -468,6 +475,9 @@ class InspectionScene {
   std::string selected_asset_;
   std::optional<std::uint32_t> selected_item_;
   std::optional<jerusalem::DialogueText> dialogue_;
+  std::optional<jerusalem::Dan> dialogue_animation_;
+  std::vector<jerusalem::TopicGroup> keywords_;
+  std::vector<std::pair<std::uint32_t,std::uint32_t>> last_speech_layers_;
   std::uint32_t dialogue_id_=0;
   std::unique_ptr<jerusalem::CinemaDecoder> movie_;
   std::uint64_t movie_frames_=0,movie_start_=0,movie_offset_=0,movie_pause_at_=0,movie_paused_total_=0;
@@ -478,6 +488,8 @@ class InspectionScene {
   std::unique_ptr<jerusalem::A01Story> story_;
   std::unique_ptr<jerusalem::StageArt> story_art_,system_art_;
   std::unique_ptr<jerusalem::AqcAnimation> story_animation_;
+  std::map<std::string,jerusalem::Bitmap> art_cache_;
+  std::size_t art_cache_bytes_=0;
   struct LayerFrames {jerusalem::StageLayer layer;std::vector<jerusalem::Bitmap> frames;};
   std::vector<LayerFrames> story_layers_;
   jerusalem::Bitmap story_base_;
@@ -489,10 +501,14 @@ class InspectionScene {
     const char* storage=SDL_GetAndroidInternalStoragePath();if(!storage)throw jerusalem::ParseError("Android game-data storage unavailable");
     return std::filesystem::path(storage)/"game-data";
   }
-  void abandon_story() {renderer_.game_mode(false);story_.reset();story_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
+  void abandon_story() {art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();story_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
   void story_error(const std::exception& error) {story_halted_=true;audio_.stop();clear_dialogue();movie_.reset();story_media_=0;report(std::string("A01 story stopped: ")+error.what()+". Tap Start A01 story to restart.");}
   jerusalem::Bitmap art_image(const std::string& name) {
-    try{return story_art_->image(name);}catch(const jerusalem::ParseError& e){if(std::string(e.what()).find("missing AT3 image:")!=0)throw;return system_art_->image(name);}
+    if(const auto found=art_cache_.find(name);found!=art_cache_.end())return found->second;
+    jerusalem::Bitmap image;
+    try{image=story_art_->image(name);}catch(const jerusalem::ParseError& e){if(std::string(e.what()).find("missing AT3 image:")!=0)throw;image=system_art_->image(name);}
+    if(art_cache_bytes_+image.rgba.size()>48*1024*1024){art_cache_.clear();art_cache_bytes_=0;}
+    art_cache_bytes_+=image.rgba.size();art_cache_.emplace(name,image);return image;
   }
   void prepare_story_picture() {
     story_layers_.clear();story_animation_.reset();story_visual_=0;
@@ -548,7 +564,7 @@ class InspectionScene {
       if(cue->kind==jerusalem::StoryCue::Node || cue->kind==jerusalem::StoryCue::Puzzle){
         audio_.stop();clear_dialogue();movie_.reset();node_=cue->kind==jerusalem::StoryCue::Node?std::optional<std::uint32_t>(cue->id):std::nullopt;
         renderer_.clear_image();prepare_story_picture();render_story_picture(true);renderer_.set_camera(cue->camera);publish_inventory();
-        if(cue->kind==jerusalem::StoryCue::Node){std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:navigation_->ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.at(cue->id),bindings);}
+        if(cue->kind==jerusalem::StoryCue::Node){std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:navigation_->ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.at(cue->id),bindings);}else{std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:story_->setup().ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.begin()->second,bindings);}
         report("A01 story: "+std::string(story_->puzzle()?"puzzle ":"node ")+std::to_string(cue->id)+". Tap original hotspots; Inventory selects items.");
       }else if(cue->kind==jerusalem::StoryCue::Movie){
         ambience_.stop();clear_dialogue();audio_.stop();const auto offset=resume_media_;resume_media_=0;
@@ -558,7 +574,7 @@ class InspectionScene {
     }
   }
   std::string last_subtitle_;
-  void clear_dialogue() {dialogue_.reset();dialogue_id_=0;last_subtitle_.clear();std::lock_guard<std::mutex> guard(bridge_mutex);subtitle_report.clear();}
+  void clear_dialogue() {if(dialogue_animation_ && story_)story_->clear_speech_animation(*dialogue_animation_);dialogue_animation_.reset();last_speech_layers_.clear();dialogue_.reset();dialogue_id_=0;last_subtitle_.clear();std::lock_guard<std::mutex> guard(bridge_mutex);subtitle_report.clear();}
   struct NavigationInput {
     jerusalem::SceneGraph graph;
     std::map<std::uint32_t,std::filesystem::path> assets;
@@ -597,7 +613,7 @@ class InspectionScene {
     else {
       out << "Collected items: " << state->inventory().size() << '\n';
       for (const auto id:state->inventory()) {
-        const auto name=jerusalem::inventory_name(*navigation_,id);
+        const auto name=story_?story_->item_name(id):jerusalem::inventory_name(*navigation_,id);
         out << "- " << name << " [" << id << "]\n";
         options << id << '\t' << name << '\n';
       }
@@ -605,7 +621,9 @@ class InspectionScene {
       else out << "\nChoose Combine items to select two ingredients. Use item selects an ingredient for a USE hotspot. Supported character effects and a spoken response are available with refreshed connections.";
       out << (story_?"\nUse Menu → Save game to save story progress. New Game restarts from the opening.":"\nSave checkpoint keeps your node, view, pickups and combinations. Original Windows saves are not supported.");
     }
-    std::lock_guard<std::mutex> guard(bridge_mutex);inventory_report=out.str();inventory_options=options.str();
+    std::ostringstream topics;
+    if(story_)for(auto id:story_->topics())for(const auto& group:keywords_)for(const auto& entry:group.topics)if(entry.id==id)topics<<id<<'\t'<<entry.text<<'\n';
+    std::lock_guard<std::mutex> guard(bridge_mutex);inventory_report=out.str();inventory_options=options.str();topic_options=topics.str();
   }
   void enter(std::uint32_t id,jerusalem::Camera camera,const jerusalem::InteractionState* next=nullptr) {
     selected_item_.reset();clear_dialogue();movie_.reset();
@@ -702,24 +720,17 @@ class InspectionScene {
     try {
       auto prepared=prepare_navigation();const auto bytes=jerusalem::read_file(data_root()/"a01-stage.tsv");
       const auto setup=jerusalem::parse_stage(std::string(bytes.begin(),bytes.end()));
-      auto tag=jerusalem::checkpoint_assets(prepared.graph,prepared.assets);std::uint64_t total=0;
-      const auto data=[&](const std::filesystem::path& path){auto b=jerusalem::read_file(path);total+=b.size();if(total>512ULL*1024*1024)throw jerusalem::ParseError("story asset fingerprint limit");for(unsigned i=0;i<8;++i)tag=(tag^std::uint8_t(b.size()>>(8*i)))*1099511628211ULL;for(auto v:b)tag=(tag^v)*1099511628211ULL;return b;};
-      auto art=std::make_unique<jerusalem::StageArt>(data(jerusalem::game_file(data_root(),{"A01.AT3"})));
-      auto system=std::make_unique<jerusalem::StageArt>(data(jerusalem::game_file(data_root(),{"SY.AT3"})));
-      // Check every resource needed by this supported story slice before replacing preview state.
-      for(const auto& name:{"A01S01_AN001","A01S01_AN002","A01S01_AN003","A01S01_AN004","A01S01_AN006","A01S01_AN007A","A01S01_AN007B","A01S01_AN007C","A01S01_AN009"})
-        (void)data(jerusalem::game_file(data_root(),{"A01","PLA","ENG",std::string(name)+".CI2"}));
-      for(const auto id:{10999U,10000U,10001U,10002U,11000U,11002U,11004U,11005U,11008U,11011U,11012U,11013U,11014U,11015U,11016U,11017U}){
-        const auto d=std::find_if(setup.dialogues.begin(),setup.dialogues.end(),[&](const jerusalem::DialogueResource& r){return r.id==id;});
-        if(d==setup.dialogues.end())throw jerusalem::ParseError("refresh A01 connections from the original executable");
-        const auto voice=jerusalem::resolve_dialogue(data_root(),*d);(void)data(voice.audio);(void)data(voice.subtitles);
-      }
+      const auto tags=jerusalem::a01_story_assets(prepared.graph,setup,data_root());const auto tag=tags.current,legacy_tag=tags.legacy;
+      auto art=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{"A01.AT3"})));
+      auto system=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{"SY.AT3"})));
+      const auto keyword_bytes=jerusalem::read_file(jerusalem::game_file(data_root(),{"KEYWORDS.INI"}));
+      auto keywords=jerusalem::parse_keywords(std::string(keyword_bytes.begin(),keyword_bytes.end()));
       auto items=std::make_unique<jerusalem::InteractionState>(prepared.graph);
-      auto next=std::make_unique<jerusalem::A01Story>(setup,prepared.graph,*items);jerusalem::StoryResume resume;
-      if(loading){auto path=story_path(automatic);if(std::filesystem::file_size(path)>65536)throw jerusalem::ParseError("story save size limit");const auto bytes=jerusalem::read_file(path);resume=next->load(jerusalem::Bytes(bytes),tag);}else next->start();
+      auto next=std::make_unique<jerusalem::A01Story>(setup,prepared.graph,*items,static_cast<std::uint32_t>(SDL_GetTicks()));jerusalem::StoryResume resume;
+      if(loading){auto path=story_path(automatic);if(std::filesystem::file_size(path)>65536)throw jerusalem::ParseError("story save size limit");const auto bytes=jerusalem::read_file(path);resume=next->load(jerusalem::Bytes(bytes),tag,legacy_tag);}else next->start();
       abandon_story();audio_.stop();clear_dialogue();movie_.reset();ambience_.stop();node_.reset();selected_item_.reset();
       navigation_=std::move(prepared.graph);assets_=std::move(prepared.assets);interactions_=std::move(items);
-      story_art_=std::move(art);system_art_=std::move(system);story_=std::move(next);story_assets_=tag;renderer_.game_mode(true);
+      story_art_=std::move(art);system_art_=std::move(system);story_=std::move(next);keywords_=std::move(keywords);topic_requested.store(false);story_assets_=tag;renderer_.game_mode(true);
       story_tick_=SDL_GetTicks();story_elapsed_=resume.visual_ms;story_seconds_=0;story_halted_=false;resume_media_=resume.media_ms;selected_item_=resume.selected;
       renderer_.clear_image();story_base_={};if(story_->scene()){if(!story_->puzzle())node_=story_->scene();prepare_story_picture();render_story_picture(true);renderer_.set_camera(resume.camera);}
       publish_inventory();pump_story();last_autosave_=SDL_GetTicks();result(loading?"load":"new",true);
@@ -736,10 +747,10 @@ class InspectionScene {
   }
   static std::filesystem::path story_path(bool automatic=false){const char* p=SDL_GetAndroidInternalStoragePath();if(!p)throw jerusalem::ParseError("save storage unavailable");return std::filesystem::path(p)/(automatic?"native-saves/a01-auto.jrs":"native-saves/a01-story.jrs");}
   void save_story(bool automatic=false){
-    if(automatic){last_autosave_=SDL_GetTicks();if(!story_ || story_halted_ || story_->failed() || story_->boundary())return;}
+    if(automatic){last_autosave_=SDL_GetTicks();if(!story_ || story_halted_ || story_->failed() || (story_->boundary() && !story_->finished()))return;}
     try{
       if(!story_ || story_halted_)throw jerusalem::ParseError("start a game before saving");
-      if(automatic && (story_->failed() || story_->boundary()))return;
+      if(automatic && (story_->failed() || (story_->boundary() && !story_->finished())))return;
       jerusalem::StoryResume resume{renderer_.camera(),0,story_elapsed_,selected_item_};
       if(story_->playing()){resume.media_ms=story_->playing()->kind==jerusalem::StoryCue::Movie?movie_time():audio_.position().value_or(0);}
       const auto bytes=story_->save(resume,story_assets_);jerusalem::write_save_file(story_path(automatic),bytes);last_autosave_=SDL_GetTicks();
@@ -751,7 +762,7 @@ class InspectionScene {
     bool automatic=false;try{const auto manual=story_path(),autosave=story_path(true);automatic=std::filesystem::exists(autosave) && (!std::filesystem::exists(manual) || std::filesystem::last_write_time(autosave)>std::filesystem::last_write_time(manual));}catch(const std::exception&){ }
     start_story(true,automatic);
   }
-  unsigned flags() const {return story_?(1U | (story_->failed()?2U:0U) | (story_halted_?4U:0U) | (story_->busy()?8U:0U)):0U;}
+  unsigned flags() const {return story_?(1U | (story_->failed()?2U:0U) | (story_halted_?4U:0U) | (story_->busy()?8U:0U) | (story_->finished()?16U:0U)):0U;}
   void volume(){audio_.volume();ambience_.volume();}
   void update_story() {
     const auto now=SDL_GetTicks();auto delta=now-story_tick_;story_tick_=now;
@@ -768,14 +779,14 @@ class InspectionScene {
   void story_tap(float x,float y) {
     try {
       if(story_halted_ || story_->busy() || story_->boundary())return;
-      if(story_->failed()){report("This attempt ended. Tap Start A01 story to try again.");return;}
+      if(story_->failed()){game_menu_requested.store(true);return;}
       const auto point=story_->puzzle()?renderer_.puzzle_hit(x,y):renderer_.hit(x,y);if(!point)return;
       if(const auto target=story_->hit(point->x,point->y)) {
         const auto selected=selected_item_;selected_item_.reset();
         if(target->object==10010 && !selected && story_->local_item()) {selected_item_=10010;report("World object selected. Tap the character hotspot to use it.");return;}
         const bool done=!selected && !story_->puzzle() && std::any_of(navigation_->items.begin(),navigation_->items.end(),[&](const jerusalem::Collectible& i){return i.id==target->object;})
           ?story_->pickup(target->object):story_->activate(target->object,target->event,selected);
-        if(done){publish_inventory();pump_story();if(!story_->busy()){prepare_story_picture();render_story_picture();}if(!story_->busy())report("A01 interaction accepted at object "+std::to_string(target->object)+".");}
+        if(done){if(target->object==10014 && !story_->topics().empty())topic_requested.store(true);publish_inventory();pump_story();if(!story_->busy()){prepare_story_picture();render_story_picture();}if(!story_->busy())report("A01 interaction accepted at object "+std::to_string(target->object)+".");}
         else report("No supported action for that hotspot and selected item.");
         return;
       }
@@ -802,21 +813,34 @@ class InspectionScene {
         const auto duration=std::max(std::uint64_t(info.duration_ticks)*10,std::uint64_t(info.frames)*100000/info.rate_word);
         if(story_ && movie_time()<duration)return;
         movie_.reset();
-        if(story_){const auto serial=story_media_;story_media_=0;story_->complete(serial);pump_story();}
+        if(story_){const auto serial=story_media_;story_media_=0;story_->complete(serial);pump_story();
+          if(!story_->busy() && !story_->boundary()){prepare_story_picture();render_story_picture();publish_inventory();report("A01 story: "+std::string(story_->puzzle()?"puzzle ":"node ")+std::to_string(story_->scene())+". Tap original hotspots; Inventory selects items.");}
+        }
         else report("Cinema preview decoded "+std::to_string(movie_frames_)+" frames. No story event was triggered.");
       }
     }catch(const std::exception& e){movie_.reset();audio_.stop();if(story_)story_error(e);else report(std::string("Cinema preview stopped: ")+e.what());}
+  }
+  void choose_topic(std::uint32_t id){
+    if(!story_ || story_halted_)return;
+    try{if(story_->choose_topic(id)){selected_item_.reset();publish_inventory();pump_story();}else report("That conversation topic is not available now.");}
+    catch(const std::exception& e){story_error(e);}
   }
   void select_item(std::uint32_t id) {
     if(story_ && (story_halted_ || story_->busy())){report("Wait for the story sequence to finish.");return;}
     if(!navigation_ || !interactions_ || !interactions_->owns(id)){report("Select an item currently in the navigation inventory.");return;}
     if(navigation_->targets.empty()){report("Item use needs refreshed connections: long-press A01 navigation and select the original executable.");return;}
-    selected_item_=id;report("Using "+jerusalem::inventory_name(*navigation_,id)+". Tap a USE marker; an unsupported attempt cancels the selection.");
+    selected_item_=id;report("Using "+(story_?story_->item_name(id):jerusalem::inventory_name(*navigation_,id))+". Tap a USE marker; an unsupported attempt cancels the selection.");
   }
   void update_dialogue() {
     if(!dialogue_)return;
     const auto elapsed=audio_.position();
     const auto text=elapsed?jerusalem::subtitle_at(*dialogue_,*elapsed):std::string{};
+    if(story_ && dialogue_animation_ && elapsed){
+      story_->speech_animation(*dialogue_animation_,*elapsed);
+      std::vector<std::pair<std::uint32_t,std::uint32_t>> visible;
+      for(const auto& l:story_->layers())if(!l.panorama)visible.push_back({l.object,l.presentation});
+      if(visible!=last_speech_layers_){last_speech_layers_=std::move(visible);prepare_story_picture();render_story_picture();}
+    }
     if(text!=last_subtitle_){last_subtitle_=text;{std::lock_guard<std::mutex> guard(bridge_mutex);subtitle_report=text;}
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Subtitle state: dialogue=%u elapsed=%llu text=%s",dialogue_id_,static_cast<unsigned long long>(elapsed.value_or(0)),text.c_str());}
     if(!elapsed || audio_.finished()){
@@ -832,7 +856,15 @@ class InspectionScene {
     const auto files=jerusalem::resolve_dialogue(std::filesystem::path(storage)/"game-data",*found);
     const auto text=jerusalem::read_file(files.subtitles);auto captions=jerusalem::parse_dia(std::string(text.begin(),text.end()));
     const auto sound=jerusalem::read_file(files.audio);audio_.play(jerusalem::Bytes(sound),files.audio.filename().string(),false,offset);
-    clear_dialogue();dialogue_=std::move(captions);dialogue_id_=id;update_dialogue();
+    clear_dialogue();dialogue_=std::move(captions);dialogue_id_=id;
+    if(story_ && files.animation){
+      try{
+        const auto bytes=jerusalem::read_file(*files.animation);auto animation=jerusalem::parse_dan(std::string(bytes.begin(),bytes.end()));
+        for(const auto& level:animation.levels)if(std::none_of(story_->setup().layers.begin(),story_->setup().layers.end(),[&](const jerusalem::StageLayer& l){return l.object==level.second && l.presentation==level.third;}))throw jerusalem::ParseError("DAN references an unknown presentation");
+        dialogue_animation_=std::move(animation);
+      }catch(const jerusalem::ParseError& e){__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Speech animation unavailable: %s: %s",files.animation->filename().string().c_str(),e.what());}
+    }
+    update_dialogue();
     __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Dialogue started: id=%u stem=%s",id,found->stem.c_str());
   }
   void combine(std::uint32_t first,std::uint32_t second) {
@@ -840,9 +872,9 @@ class InspectionScene {
     if(story_ && (story_halted_ || story_->busy())){report("Wait for the story sequence to finish.");return;}
     try {
       if(navigation_->combinations.empty())throw jerusalem::ParseError("refresh connections by long-pressing A01 navigation and selecting the original executable");
-      const auto result=interactions_->combine(first,second);
+      const auto result=story_?story_->combine(first,second):interactions_->combine(first,second);
       if(!result) {report("These items have no supported combination, or are no longer in inventory.");return;}
-      publish_inventory();report("Combined: "+jerusalem::inventory_name(*navigation_,*result)+" ["+std::to_string(*result)+"]. Open Inventory to inspect it.");
+      publish_inventory();report("Combined: "+(story_?story_->item_name(*result):jerusalem::inventory_name(*navigation_,*result))+" ["+std::to_string(*result)+"]. Open Inventory to inspect it.");
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Combination state: first=%u second=%u result=%u inventory=%zu",first,second,*result,interactions_->inventory().size());
     }catch(const std::exception& e){report(std::string("Combination unavailable: ")+e.what());}
   }
@@ -946,25 +978,42 @@ class LifecycleWatch {
 } // namespace
 
 extern "C" JNIEXPORT void JNICALL
-Java_org_jerusalem_engine_MainActivity_nativeMenuPaused(JNIEnv*,jclass,jboolean paused){menu_paused.store(paused);}
+Java_org_jerusalem_engine_MainActivity_nativeMenuPaused(JNIEnv*,jclass,jboolean paused){menu_paused.store(paused);if(paused)game_menu_requested.store(false);}
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeDeveloperMode(JNIEnv*,jclass,jboolean enabled){developer_tools.store(enabled);}
 extern "C" JNIEXPORT jint JNICALL
-Java_org_jerusalem_engine_MainActivity_nativeGameFlags(JNIEnv*,jclass){return static_cast<jint>(game_flags.load());}
+Java_org_jerusalem_engine_MainActivity_nativeGameFlags(JNIEnv*,jclass){return static_cast<jint>(game_flags.load() | (topic_requested.load()?32U:0U) | (game_menu_requested.load()?64U:0U));}
 extern "C" JNIEXPORT jstring JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeGameResult(JNIEnv* env,jclass){std::lock_guard<std::mutex> guard(bridge_mutex);return env->NewStringUTF(game_result.c_str());}
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeViewportBottom(JNIEnv*,jclass,jint pixels){viewport_bottom.store(static_cast<unsigned>(std::clamp(pixels,0,2048)));}
 extern "C" JNIEXPORT void JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeOptions(JNIEnv*,jclass,jint volume,jboolean markers){master_volume.store(static_cast<unsigned>(std::clamp(volume,0,100)));show_hotspots.store(markers);}
-extern "C" JNIEXPORT jintArray JNICALL
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeTopics(JNIEnv* env,jclass){topic_requested.store(false);std::lock_guard<std::mutex> guard(bridge_mutex);return env->NewStringUTF(topic_options.c_str());}
+extern "C" JNIEXPORT void JNICALL
+Java_org_jerusalem_engine_MainActivity_nativeChooseTopic(JNIEnv*,jclass,jint id){if(id>0){std::lock_guard<std::mutex> guard(bridge_mutex);pending_topic=static_cast<std::uint32_t>(id);}}
+extern "C" JNIEXPORT jobjectArray JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeMenuArt(JNIEnv* env,jclass){
- try{const char* storage=SDL_GetAndroidInternalStoragePath();if(!storage)return nullptr;const auto image=jerusalem::StageArt(jerusalem::read_file(jerusalem::game_file(std::filesystem::path(storage)/"game-data",{"SY.AT3"}))).image("MENU.BMP");
-  if(image.width>1024 || image.height>1024)throw jerusalem::ParseError("menu artwork dimensions");
-  std::vector<jint> pixels{static_cast<jint>(image.width),static_cast<jint>(image.height)};for(std::size_t i=0;i<image.rgba.size();i+=4)pixels.push_back(static_cast<jint>(0xff000000U | unsigned(image.rgba[i])<<16 | unsigned(image.rgba[i+1])<<8 | image.rgba[i+2]));
-  __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Menu artwork: size=%ux%u",image.width,image.height);
-  const auto out=env->NewIntArray(static_cast<jsize>(pixels.size()));if(out)env->SetIntArrayRegion(out,0,static_cast<jsize>(pixels.size()),pixels.data());return out;
- }catch(const std::exception&){return nullptr;}
+ try{
+  const char* storage=SDL_GetAndroidInternalStoragePath();if(!storage)return nullptr;
+  const auto art=jerusalem::load_menu_art(jerusalem::StageArt(jerusalem::read_file(jerusalem::game_file(std::filesystem::path(storage)/"game-data",{"SY.AT3"}))));
+  const auto type=env->FindClass("[I");if(!type)return nullptr;
+  const auto out=env->NewObjectArray(11,type,nullptr);env->DeleteLocalRef(type);if(!out)return nullptr;
+  const auto& entries=jerusalem::original_menu_entries();
+  for(unsigned slot=0;slot<11;++slot){
+    const jerusalem::Bitmap* bitmap=slot==0?&art.background:art.highlights[slot-1]?&*art.highlights[slot-1]:nullptr;
+    std::vector<jint> pixels;
+    if(slot==0)pixels={0,0,640,480};
+    else{const auto& e=entries[slot-1];pixels={e.left,e.top,e.right,e.bottom};}
+    pixels.push_back(bitmap?static_cast<jint>(bitmap->width):0);pixels.push_back(bitmap?static_cast<jint>(bitmap->height):0);
+    if(bitmap)for(std::size_t i=0;i<bitmap->rgba.size();i+=4)pixels.push_back(static_cast<jint>(unsigned(bitmap->rgba[i+3])<<24 | unsigned(bitmap->rgba[i])<<16 | unsigned(bitmap->rgba[i+1])<<8 | bitmap->rgba[i+2]));
+    const auto row=env->NewIntArray(static_cast<jsize>(pixels.size()));if(!row)return nullptr;
+    env->SetIntArrayRegion(row,0,static_cast<jsize>(pixels.size()),pixels.data());env->SetObjectArrayElement(out,static_cast<jsize>(slot),row);env->DeleteLocalRef(row);if(env->ExceptionCheck())return nullptr;
+  }
+  for(const auto& warning:art.warnings)__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Menu highlight unavailable: %s",warning.c_str());
+  __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Menu artwork: size=640x480 highlights=%zu",10-art.warnings.size());return out;
+ }catch(const std::exception& e){__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Menu artwork unavailable: %s",e.what());return nullptr;}
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_org_jerusalem_engine_MainActivity_nativeDescribe(JNIEnv* env,jclass,jstring path) {
@@ -1109,11 +1158,11 @@ int main(int,char**) {
         else if (event.type==SDL_EVENT_MOUSE_WHEEL && scene.can_look()) renderer.zoom(event.wheel.y>0?1.2f:1/1.2f);
         else if (event.type==SDL_EVENT_RENDER_DEVICE_RESET) { renderer.clear_image(); report("Graphics device reset. Reopen asset from Browse."); }
       }
-      std::string path,message; unsigned action;std::uint32_t use_item;
+      std::string path,message; unsigned action;std::uint32_t use_item,topic;
       std::vector<std::pair<std::uint32_t,std::uint32_t>> combinations;
       {
         std::lock_guard<std::mutex> guard(bridge_mutex);
-        use_item=pending_use;pending_use=0;path.swap(pending_path);combinations.swap(pending_combinations); action=commands; commands=0; message=diagnostic;
+        use_item=pending_use;pending_use=0;topic=pending_topic;pending_topic=0;path.swap(pending_path);combinations.swap(pending_combinations); action=commands; commands=0; message=diagnostic;
       }
       const bool paused=menu_paused.load() || lifecycle.background();
       if(was_menu!=menu_paused.load()){was_menu=menu_paused.load();audio.pause(paused);scene.pause_audio(paused);renderer.reset_animation_clock();if(was_menu)scene.save_story(true);}
@@ -1128,6 +1177,7 @@ int main(int,char**) {
       if (action&(1U<<7)) scene.toggle_navigation();
       if (action&(1U<<8)) scene.toggle_navigation(true);
       if(use_item)scene.select_item(use_item);
+      if(topic)scene.choose_topic(topic);
       for(const auto& pair:combinations)scene.combine(pair.first,pair.second);
       if (action&(1U<<9)) scene.save_checkpoint();
       if (action&(1U<<10)) scene.load_checkpoint();

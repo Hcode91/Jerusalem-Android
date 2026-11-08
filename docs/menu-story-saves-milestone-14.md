@@ -1,5 +1,7 @@
 # Main menu, story saves and alpha sprites
 
+This records milestone 14. [Milestone 16](a01-complete-milestone-16.md) adds full A01 progression and version-2 saves, including migration of these version-1 checkpoints.
+
 The application now opens a game menu instead of the inspector toolbar. New Game launches the existing native A01 opening/escape route. Continue resumes the active session, or loads the newer manual/autosave slot after a process restart. The complete A01 area is still unfinished.
 
 ## Menu and controls
