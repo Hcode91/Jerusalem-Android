@@ -53,6 +53,9 @@ Version-1 saves use the previous asset/rule fingerprints for migration. The old 
 
 The first published Actions runs on `0b80977` passed host tests, APK compilation/lint and ARM64 packaging, then reached the camp fixture and failed its first jug tap. Captured evidence showed that ADB taps used renderer-local coordinates without the Android status-bar offset, and could use the inset from before the menu closed. The corrected test maps through the accessible game viewport's screen bounds and output pixel scale, and waits until native and Android control heights match. Regression checks reproduce the captured 24-pixel offset, the stale inset, fullscreen and scaled outputs, and reject movie geometry. All gameplay assertions remain required; the corrected emulator run is pending.
 
+
+The next runs on `b8ca35f` passed item pickup/combination and both camp conversations. Native logs confirm entry to card-table puzzle 10037 and acceptance of object 10021; the check nevertheless failed because its UI status had changed from the scene description to the interaction acknowledgement. Camp progression checks now require a new final puzzle cue after each action and reject intermediate speech/movie cues and earlier visits. Regression tests cover status replacement and stale/intermediate cues. The corrected complete emulator route remains pending; these observations do not establish that the later card/save/ending steps passed on Android.
+
 ## Phone test
 
 1. Install the Actions APK over the existing app. Keep imported data and saves.

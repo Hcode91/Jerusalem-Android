@@ -22,6 +22,24 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_story_puzzle_survives_status_message_replacement(self):
+        logs = (b'A01 story cue: kind=1 id=10037 serial=57\n'
+                b'A01 story: puzzle 10037. Tap original hotspots; Inventory selects items.\n'
+                b'A01 interaction accepted at object 10021.\n')
+        self.assertTrue(smoke.story_puzzle_ready(logs, 10037))
+        self.assertFalse(smoke.story_puzzle_ready(logs, 10023))
+
+    def test_story_puzzle_wait_requires_a_new_final_cue(self):
+        previous = b'A01 story cue: kind=1 id=10037 serial=57\n'
+        speech = (b'A01 story cue: kind=1 id=10037 serial=58\n'
+                  b'A01 story cue: kind=3 id=11040 serial=59\n')
+        returned = b'A01 story cue: kind=1 id=10037 serial=60\n'
+        self.assertFalse(smoke.story_puzzle_ready(speech, 10037))
+        self.assertFalse(smoke.story_puzzle_ready(b'', 10037))
+        with patch.object(smoke, 'game_logs', side_effect=[previous, previous+speech, previous+speech+returned]) as logs, patch.object(smoke.time, 'sleep'):
+            smoke.wait_for_story_puzzle(10037, len(previous), 'did not return')
+            self.assertEqual(logs.call_count, 3)
+
     def test_puzzle_tap_includes_captured_android_status_bar_offset(self):
         # Failed Actions capture: 320x640 screen, SDL surface below 24px status bar.
         xml = ui({'content-desc': 'Game viewport', 'bounds': '[0,24][320,640]'},
