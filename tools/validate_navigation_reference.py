@@ -18,7 +18,7 @@ ARITIES = {0x428120: 1, 0x42ad80: 1, 0x42af00: 5, 0x42b530: 4,
            0x42b860: 10, 0x42b9b0: 10, 0x42bab0: 10, 0x42bc00: 7}
 
 
-def capture(executable, begin=BEGIN, end=END, arities=ARITIES):
+def capture(executable, begin=BEGIN, end=END, arities=ARITIES, cdecl=()):
     from unicorn import Uc, UC_ARCH_X86, UC_MODE_32, UC_PROT_READ, UC_PROT_WRITE, UC_PROT_EXEC, UC_HOOK_CODE
     from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_ECX, UC_X86_REG_EIP, UC_X86_REG_ESI
     if hashlib.sha256(executable).hexdigest() != EXE_HASH:
@@ -41,11 +41,14 @@ def capture(executable, begin=BEGIN, end=END, arities=ARITIES):
         cpu.mem_write(address, data)
     map_code(begin, read(begin, end-begin))
     for target, count in arities.items():
-        map_code(target, b'\xc2' + struct.pack('<H', count*4))
+        map_code(target, b'\xc2' + struct.pack('<H', 0 if target in cdecl else count*4))
     for page in mapped:
         cpu.mem_protect(page, 4096, UC_PROT_READ | UC_PROT_EXEC)
     stack = 0x1000000
     cpu.mem_map(stack, 65536, UC_PROT_READ | UC_PROT_WRITE)
+    # Dynamic setup reads only these zero-initialized load/volume preferences.
+    # APIs remain capture stubs; there are no mapped OS services or file access.
+    cpu.mem_map(0x2000000, 4096, UC_PROT_READ | UC_PROT_WRITE)
     cpu.reg_write(UC_X86_REG_ESP, stack+32768)
     cpu.reg_write(UC_X86_REG_ECX, 0x2000000)
     cpu.reg_write(UC_X86_REG_ESI, 0x2000000)

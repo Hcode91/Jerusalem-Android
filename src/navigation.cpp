@@ -45,11 +45,13 @@ class Pe {
     throw ParseError("PE address is not file backed");
   }
   std::string label(std::uint32_t address) const {
+    if(address==0x4d0518)return {}; // Verified zero-initialized shared empty string.
     std::string result;
     for(unsigned i=0;i<96;++i) {const auto c=at(address+i,1).u8(0);if(!c)return result;if(c<32 || c>126)throw ParseError("unsupported item label encoding");result+=char(c);}
     throw ParseError("unterminated item label");
   }
   std::string name(std::uint32_t address,bool filename=false) const {
+    if(address==0x4d0518)return {};
     std::string text;
     for (unsigned i=0;i<64;++i) {
       auto c=at(address+i,1).u8(0);
@@ -106,7 +108,10 @@ StageSetup extract_a01_stage(Bytes b) {
   const auto consume=[&](const std::vector<SetupCall>& calls) {
     for(const auto& call:calls) {
       const auto& a=call.arguments;
-      if(call.target==0x42af00) {
+      if(call.target==0x429700) {
+        if(a.size()!=4 || (a[3]!=1 && a[3]!=9))throw ParseError("unsupported stage object");
+        result.objects.push_back({a[0],pe.label(a[1]),pe.name(a[2],true)});
+      }else if(call.target==0x42af00) {
         if(a.size()!=5 || a[4]!=1)throw ParseError("unsupported puzzle background");
         result.backgrounds.push_back({a[0],pe.name(a[1],true),signed_word(a[2]),signed_word(a[3])});
       }else if(call.target==0x429ac0 || call.target==0x429c20) {
@@ -138,6 +143,35 @@ StageSetup extract_a01_stage(Bytes b) {
       auto name=pe.name(p.u32(1),true);if(name.size()<5 || name.substr(name.size()-4)!=".WAC")throw ParseError("unsupported story voice suffix");name.resize(name.size()-4);
       result.dialogues.push_back({p.u32(8),"A01",std::move(name)});
     }
+  }
+  // Category-2 sound names and constant puzzle bindings in the pinned setup.
+  std::map<std::uint32_t,std::string> sound_names;std::map<std::uint32_t,unsigned> masters;
+  for(std::uint32_t address=0x47f100;address<0x47fab0;++address){
+    const auto p=pe.at(address,19);
+    if(p.u8(0)==0x68 && p.u8(5)==0x6a && p.u8(6)==2 && p.u8(7)==0x68 && p.is(12,std::string("\x8b\xce\xe8",3)) && std::int64_t(address)+19+p.i32(15)==0x42c8d0){
+      auto stem=pe.name(p.u32(1),true);if(stem.size()<5)throw ParseError("invalid puzzle sound name");stem.resize(stem.size()-4);sound_names.emplace(p.u32(8),stem);
+    }
+  }
+  const auto sound_packets=[&](std::uint32_t target,unsigned count){
+    std::vector<SetupCall> calls;
+    for(std::uint32_t address=0x47f100;address<0x47fab0;++address){
+      const auto p=pe.at(address,5);if(p.u8(0)!=0xe8 || std::int64_t(address)+5+p.i32(1)!=target)continue;
+      bool found=false;
+      for(unsigned distance=5;distance<=40;++distance){
+        const auto first=address-distance;
+        try{const auto bytes=pe.at(first,distance+5);std::vector<std::uint8_t> code{0x56,0x8b,0xf1};code.insert(code.end(),bytes.data(),bytes.data()+bytes.size());const auto packet=parse_setup_calls(Bytes(code),first-3);
+          if(packet.size()==1 && packet[0].target==target && packet[0].arguments.size()==count){calls.push_back(packet[0]);found=true;break;}
+        }catch(const ParseError&){ }
+      }
+      if(!found)throw ParseError("unsupported puzzle sound packet");
+    }
+    return calls;
+  };
+  for(const auto& call:sound_packets(0x42cd50,2))masters[call.arguments[0]]=call.arguments[1];
+  for(const auto& call:sound_packets(0x42b4a0,7)){
+    const auto& a=call.arguments;
+    if(!sound_names.count(a[1]) || !masters.count(a[1]) || a[3]!=0 || a[4]!=1 || a[5]!=1 || a[6]!=10)throw ParseError("unsupported puzzle ambience");
+    result.ambient.push_back({a[0],a[1],a[2],sound_names.at(a[1]),masters.at(a[1])});
   }
   // Round-trip validates every field before exposing a usable model.
   return parse_stage(write_stage(result));

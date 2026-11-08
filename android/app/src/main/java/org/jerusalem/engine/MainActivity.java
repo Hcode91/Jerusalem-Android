@@ -15,10 +15,8 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.CheckBox;
 import android.widget.SeekBar;
-import android.graphics.Bitmap;
 import org.libsdl.app.SDLActivity;
 import java.io.File;
 import java.io.ByteArrayOutputStream;
@@ -46,13 +44,15 @@ public class MainActivity extends SDLActivity {
     private String selectedAudioPath, selectedMoviePath, pendingAudioPath;
     private String lastNativeStatus = "";
     private boolean importing, menuVisible=true, developerMode, menuArtLoading, menuArtLoaded, menuArtAttempted, engineReadySeen;
-    private boolean subtitlesEnabled=true;
+    private boolean subtitlesEnabled=true, completedSession;
+    private AlertDialog topicDialog;
     private LinearLayout controlsPanel;
     private View developerRow, gameRow;
     private FrameLayout menuOverlay;
-    private ImageView menuImage;
+    private FrameLayout menuStage;
+    private View fallbackMenu;
+    private OriginalMenuView originalMenu;
     private TextView menuStatus;
-    private Button continueButton, saveGameButton;
     private String awaitedAction, previousResult="";
     private final java.util.ArrayList<Button> menuButtons = new java.util.ArrayList<>();
     private final Handler statusHandler = new Handler(Looper.getMainLooper());
@@ -74,6 +74,12 @@ public class MainActivity extends SDLActivity {
             if (menuOverlay != null) {
                 int flags = nativeGameFlags();
                 boolean saved = storyFile(false).isFile() || storyFile(true).isFile();
+                if ((flags & 16) == 0) completedSession = false;
+                if ((flags & 64) != 0 && !menuVisible && awaitedAction == null) openMenu();
+                if ((flags & 32) != 0 && !menuVisible && awaitedAction == null) showTopics();
+                if ((flags & 16) != 0 && !completedSession && awaitedAction == null) {
+                    completedSession = true;openMenu();showText("A01 complete", "You have completed A01. The original game continues in A02, which is not implemented yet. Your completed A01 progress can be saved from the menu.");
+                }
                 if (awaitedAction != null) {
                     String reply = nativeGameResult();
                     if (!reply.equals(previousResult) && reply.contains(":" + awaitedAction + ":")) {
@@ -88,7 +94,7 @@ public class MainActivity extends SDLActivity {
                 boolean ready = !importing && awaitedAction == null;
                 boolean active = (flags & 1) != 0 && (flags & 6) == 0;
                 for (Button action : menuButtons) {
-                    boolean enabled = ready && (action == continueButton ? active || saved : action == saveGameButton ? active : true);
+                    boolean enabled = ready && ("continue".equals(action.getTag()) ? active || saved : "save".equals(action.getTag()) ? active : true);
                     if (action.isEnabled() != enabled) action.setEnabled(enabled);
                 }
                 if (menuVisible && !menuArtLoading && !menuArtLoaded && !menuArtAttempted && lastNativeStatus.startsWith("Ready")) loadMenuArt();
@@ -113,7 +119,9 @@ public class MainActivity extends SDLActivity {
     private static native void nativeDeveloperMode(boolean enabled);
     private static native int nativeGameFlags();
     private static native String nativeGameResult();
-    private static native int[] nativeMenuArt();
+    private static native int[][] nativeMenuArt();
+    private static native String nativeTopics();
+    private static native void nativeChooseTopic(int id);
     private static native void nativeViewportBottom(int pixels);
     private static native void nativeOptions(int volume, boolean markers);
 
@@ -180,6 +188,7 @@ public class MainActivity extends SDLActivity {
         LinearLayout playButtons = new LinearLayout(this);
         playButtons.addView(button("Menu", v -> openMenu()));
         playButtons.addView(button("Inventory", v -> showInventory()));
+        playButtons.addView(button("Talk", v -> showTopics()));
         panel.addView(playButtons); gameRow = playButtons; gameRow.setVisibility(View.GONE);
         android.widget.RelativeLayout.LayoutParams layout = new android.widget.RelativeLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -192,38 +201,85 @@ public class MainActivity extends SDLActivity {
         return new File(getFilesDir(), automatic ? "native-saves/a01-auto.jrs" : "native-saves/a01-story.jrs");
     }
 
+    private static final String[] MENU_LABELS = {"New Game", "Resume Game", "Load Game", "Save Game", "Options", "Visit", "Encyclopedia", "Intro", "Credits", "Quit"};
+    // Keep the accessibility names used by existing players and automated checks.
+    private static final String[] MENU_ACCESSIBILITY = {"New Game", "Continue", "Load Game", "Save Game", "Settings", "Visit", "Encyclopedia", "Intro", "Credits", "Quit"};
+
     private void createMenu() {
-        menuOverlay = new FrameLayout(this);menuOverlay.setBackgroundColor(0xFF21150F);
-        menuImage = new ImageView(this);menuImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        menuImage.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
-        menuOverlay.addView(menuImage, new FrameLayout.LayoutParams(-1, -1));
-        // The original bitmap has baked English labels. Cover its right side with
-        // accessible native controls so unavailable original options never look active.
-        LinearLayout columns = new LinearLayout(this);
-        View decoration = new View(this); columns.addView(decoration, new LinearLayout.LayoutParams(0, -1, 0.38f));
-        ScrollView scroll = new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(0xFF21150F);
-        LinearLayout entries = new LinearLayout(this);entries.setOrientation(LinearLayout.VERTICAL);entries.setPadding(16, 20, 16, 16);
+        menuOverlay = new FrameLayout(this);menuOverlay.setBackgroundColor(0xFF000000);
+        LinearLayout columns = new LinearLayout(this);columns.setOrientation(LinearLayout.VERTICAL);
+        menuStage = new FrameLayout(this);
+        ScrollView scroll = new ScrollView(this);scroll.setFillViewport(true);
+        LinearLayout entries = new LinearLayout(this);entries.setOrientation(LinearLayout.VERTICAL);entries.setPadding(16, 12, 16, 12);
         TextView title = new TextView(this);title.setText("JERUSALEM");title.setTextColor(0xFFFFE3AE);title.setTextSize(25);entries.addView(title);
-        TextView subtitle = new TextView(this);subtitle.setText("The Three Roads to the Holy Land");subtitle.setTextColor(0xFFE7D2B5);entries.addView(subtitle);
-        menuStatus = new TextView(this);menuStatus.setText("Import your original game data, then set up the game to begin.");menuStatus.setTextColor(0xFFFFFFFF);menuStatus.setPadding(0, 12, 0, 12);entries.addView(menuStatus);
-        entries.addView(button("New Game", v -> launchGameAction(11, "new")));
-        continueButton = button("Continue", v -> {
-            int flags = nativeGameFlags();
-            if ((flags & 1) != 0 && (flags & 6) == 0) { developerMode = false;closeMenu(); }
-            else launchGameAction(14, "load");
-        });continueButton.setEnabled(false);entries.addView(continueButton);
-        entries.addView(button("Load Game", v -> chooseStorySave()));
-        saveGameButton = button("Save Game", v -> launchGameAction(12, "save"));saveGameButton.setEnabled(false);entries.addView(saveGameButton);
-        entries.addView(button("Settings", v -> showSettings()));
-        entries.addView(button("Import game data", v -> { if (!importing && awaitedAction == null) importButton.performClick(); }));
-        entries.addView(button("Set up game", v -> { if (!importing && awaitedAction == null) chooseNavigationSource(); }));
-        entries.addView(button("Developer Tools", v -> { developerMode = true;closeMenu(); }));
-        entries.addView(button("Quit", v -> finish()));
-        for (int i = 0; i < entries.getChildCount(); ++i) if (entries.getChildAt(i) instanceof Button) menuButtons.add((Button) entries.getChildAt(i));
-        scroll.addView(entries);columns.addView(scroll, new LinearLayout.LayoutParams(0, -1, 0.62f));
+        TextView description = new TextView(this);description.setText("Import your original game data to restore the original menu artwork.");description.setTextColor(0xFFFFFFFF);entries.addView(description);
+        for (int i = 0; i < MENU_LABELS.length; ++i) entries.addView(menuAction(i, false));
+        entries.addView(button("Import game data", v -> {if (!importing && awaitedAction == null) importButton.performClick();}));
+        entries.addView(button("Set up game", v -> {if (!importing && awaitedAction == null) chooseNavigationSource();}));
+        scroll.addView(entries);fallbackMenu = scroll;menuStage.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        columns.addView(menuStage, new LinearLayout.LayoutParams(-1, 0, 1));
+        LinearLayout footer = new LinearLayout(this);footer.setBackgroundColor(0xFF21150F);
+        footer.addView(button("Menu actions", v -> showMenuActions()));
+        footer.addView(button("Game data", v -> showGameData()));
+        footer.addView(button("Developer Tools", v -> { if (!importing && awaitedAction == null) {developerMode = true;closeMenu();} }));
+        columns.addView(footer);
+        menuStatus = new TextView(this);menuStatus.setText("Import your original game data, then set up the game to begin.");menuStatus.setTextColor(0xFFFFFFFF);menuStatus.setPadding(12, 2, 12, 2);menuStatus.setMaxLines(2);columns.addView(menuStatus);
         menuOverlay.addView(columns, new FrameLayout.LayoutParams(-1, -1));
-        android.widget.RelativeLayout.LayoutParams params = new android.widget.RelativeLayout.LayoutParams(-1, -1);
-        mLayout.addView(menuOverlay, params);
+        mLayout.addView(menuOverlay, new android.widget.RelativeLayout.LayoutParams(-1, -1));
+    }
+
+    private Button menuAction(int index, boolean artwork) {
+        Button action = artwork ? OriginalMenuView.action(this, MENU_ACCESSIBILITY[index]) : button(MENU_LABELS[index], v -> performMenuAction(index));
+        action.setContentDescription(MENU_ACCESSIBILITY[index]);
+        if (artwork) action.setOnClickListener(v -> performMenuAction(index));
+        if (index == 1) action.setTag("continue");else if (index == 3) action.setTag("save");
+        int flags = nativeGameFlags();boolean active = (flags & 1) != 0 && (flags & 6) == 0;
+        action.setEnabled(!importing && awaitedAction == null && (index == 1 ? active || storyFile(false).isFile() || storyFile(true).isFile() : index == 3 ? active : true));
+        menuButtons.add(action);return action;
+    }
+
+    private void performMenuAction(int index) {
+        if (importing || awaitedAction != null) return;
+        switch (index) {
+            case 0:
+                if ((nativeGameFlags() & 1) != 0) new AlertDialog.Builder(this).setTitle("New Game")
+                        .setMessage("Restart from the beginning? Your manual save will be kept; the autosave will start a new game.")
+                        .setPositiveButton("Restart", (dialog, which) -> launchGameAction(11, "new")).setNegativeButton("Cancel", null).show();
+                else launchGameAction(11, "new");
+                break;
+            case 1:
+                int flags = nativeGameFlags();
+                if ((flags & 1) != 0 && (flags & 6) == 0) {developerMode = false;closeMenu();}
+                else launchGameAction(14, "load");
+                break;
+            case 2: chooseStorySave();break;
+            case 3: launchGameAction(12, "save");break;
+            case 4: showSettings();break;
+            case 9: finish();break;
+            default: showText(MENU_LABELS[index], "This original menu entry is not implemented yet. Your current game remains paused.");break;
+        }
+    }
+
+    private void showMenuActions() {
+        if (importing || awaitedAction != null) return;
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout entries = new LinearLayout(this);entries.setOrientation(LinearLayout.VERTICAL);
+        java.util.ArrayList<Button> temporary = new java.util.ArrayList<>();
+        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Menu actions").setView(scroll).setNegativeButton("Close", null).create();
+        for (int i = 0; i < MENU_LABELS.length; ++i) {
+            final int index = i;Button action = menuAction(i, false);
+            action.setOnClickListener(v -> {dialog.dismiss();performMenuAction(index);});
+            temporary.add(action);entries.addView(action);
+        }
+        dialog.setOnDismissListener(ignored -> menuButtons.removeAll(temporary));
+        scroll.addView(entries);dialog.show();
+    }
+
+    private void showGameData() {
+        if (importing || awaitedAction != null) return;
+        new AlertDialog.Builder(this).setTitle("Game data")
+                .setItems(new String[] {"Import game data", "Set up game"}, (dialog, index) -> {if (index == 0) importButton.performClick();else chooseNavigationSource();})
+                .setNegativeButton("Close", null).show();
     }
 
     private void openMenu() {
@@ -263,14 +319,26 @@ public class MainActivity extends SDLActivity {
     }
 
     private void loadMenuArt() {
+        if (menuArtLoading) return;
         menuArtLoading = true;menuArtAttempted = true;
         worker.execute(() -> {
-            int[] pixels = nativeMenuArt();
+            int[][] packet = nativeMenuArt();
             runOnUiThread(() -> {
-                menuArtLoading = false;if (isFinishing() || isDestroyed() || pixels == null || pixels.length < 3) return;
-                int width = pixels[0], height = pixels[1];
-                if (width <= 0 || height <= 0 || (long) width*height != pixels.length-2) return;
-                menuImage.setImageBitmap(Bitmap.createBitmap(pixels, 2, width, width, height, Bitmap.Config.ARGB_8888));menuArtLoaded = true;
+                menuArtLoading = false;if (isFinishing() || isDestroyed() || packet == null) return;
+                Button[] actions = new Button[MENU_LABELS.length];
+                try {
+                    for (int i = 0; i < actions.length; ++i) actions[i] = menuAction(i, true);
+                    OriginalMenuView replacement = new OriginalMenuView(this, packet, actions);
+                    if (originalMenu != null) {
+                        for (int i = 0; i < originalMenu.getChildCount(); ++i) menuButtons.remove(originalMenu.getChildAt(i));
+                        menuStage.removeView(originalMenu);
+                    }
+                    originalMenu = replacement;menuStage.addView(originalMenu, new FrameLayout.LayoutParams(-1, -1));
+                    fallbackMenu.setVisibility(View.GONE);menuArtLoaded = true;
+                } catch (IllegalArgumentException error) {
+                    for (Button action : actions) menuButtons.remove(action);
+                    menuStatus.setText("Original menu unavailable: " + error.getMessage());
+                }
             });
         });
     }
@@ -297,6 +365,20 @@ public class MainActivity extends SDLActivity {
         button.setText(label); button.setAllCaps(false); button.setContentDescription(label);
         button.setMinHeight((int) (48 * getResources().getDisplayMetrics().density + 0.5f)); button.setOnClickListener(action);
         return button;
+    }
+
+    private void showTopics() {
+        if (topicDialog != null) return;
+        String raw = nativeTopics();
+        if (raw.isEmpty()) {showText("Dialogue", "No conversation topic is available here right now.");return;}
+        String[] rows = raw.trim().split("\\n");int[] ids = new int[rows.length];String[] labels = new String[rows.length];
+        for (int i = 0; i < rows.length; ++i) {
+            String[] fields = rows[i].split("\\t", 2);if (fields.length != 2) return;
+            ids[i] = Integer.parseInt(fields[0]);labels[i] = fields[1];
+        }
+        topicDialog = new AlertDialog.Builder(this).setTitle("Choose a topic")
+                .setItems(labels, (dialog, which) -> nativeChooseTopic(ids[which])).setNegativeButton("Close", null).create();
+        topicDialog.setOnDismissListener(dialog -> topicDialog = null);topicDialog.show();
     }
 
     private void showInventory() {

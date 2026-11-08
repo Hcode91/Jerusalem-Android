@@ -111,6 +111,37 @@ class SmokeHarnessTests(unittest.TestCase):
             self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'swipe', '220', '20', '220', '200', '300'))
             self.assertEqual(adb.call_args_list[2].args, ('shell', 'input', 'tap', '220', '50'))
 
+    def test_artwork_menu_can_open_large_button_actions(self):
+        before = ui({'class': 'android.widget.Button', 'text': 'Menu actions', 'enabled': 'true', 'bounds': '[0,200][120,250]'})
+        after = ui({'class': 'android.widget.Button', 'content-desc': 'Settings', 'enabled': 'true', 'bounds': '[10,80][180,130]'})
+        with patch.object(smoke, 'current_ui', side_effect=[before, after]), patch.object(smoke, 'adb') as adb:
+            smoke.click_menu('Settings')
+            self.assertEqual(adb.call_args_list[0].args, ('shell', 'input', 'tap', '60', '225'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '95', '105'))
+
+    def test_action_sheet_title_is_not_treated_as_another_open_button(self):
+        before = ui({'class': 'android.widget.TextView', 'text': 'Menu actions', 'bounds': '[0,0][200,40]'},
+                    {'class': 'android.widget.ScrollView', 'scrollable': 'true', 'bounds': '[0,40][200,240]'})
+        after = ui({'class': 'android.widget.Button', 'content-desc': 'Settings', 'enabled': 'true', 'bounds': '[10,80][180,130]'})
+        with patch.object(smoke, 'current_ui', side_effect=[before, after]), patch.object(smoke, 'adb') as adb:
+            smoke.click_menu('Settings')
+            self.assertEqual(adb.call_args_list[0].args[:3], ('shell', 'input', 'swipe'))
+            self.assertEqual(adb.call_args_list[1].args, ('shell', 'input', 'tap', '95', '105'))
+
+    def test_menu_alignment_rejects_shifted_or_duplicated_accessible_controls(self):
+        entries = [('New Game', 28, 433), ('Continue', 64, 469), ('Load Game', 100, 449), ('Save Game', 136, 437),
+                   ('Settings', 242, 405), ('Visit', 278, 377), ('Encyclopedia', 314, 449), ('Intro', 350, 377),
+                   ('Credits', 386, 377), ('Quit', 422, 373)]
+        nodes = [{'content-desc': 'Original game menu', 'bounds': '[0,0][640,480]'}]
+        nodes += [{'content-desc': label, 'bounds': f'[269,{top}][{right},{top+36}]'} for label, top, right in entries]
+        smoke.verify_menu_geometry(ui(*nodes))
+        nodes[1]['bounds'] = '[279,28][443,64]'
+        with self.assertRaisesRegex(RuntimeError, 'not aligned.*New Game'):
+            smoke.verify_menu_geometry(ui(*nodes))
+        nodes[1]['bounds'] = '[269,28][433,64]'
+        with self.assertRaisesRegex(RuntimeError, 'duplicated.*Quit'):
+            smoke.verify_menu_geometry(ui(*nodes, nodes[-1]))
+
     def test_offscreen_play_audio_uses_the_scrollable_toolbar(self):
         before = ui({'class': 'android.widget.HorizontalScrollView', 'bounds': '[0,100][300,150]'})
         after = ui({'content-desc': 'Play audio', 'enabled': 'true', 'bounds': '[80,100][240,150]'})

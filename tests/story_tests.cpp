@@ -91,6 +91,9 @@ void cinema_seek_tests(){
 }
 int main(int argc,char** argv){try{
  dialogue_paths();cinema_seek_tests();
+ const auto keywords=parse_keywords("#1018\t1018\r\n11018\tSynthetic first topic\r\n\r\n#11018\t1018\n11022\tSynthetic next topic\t1\n");
+ check(keywords.size()==2 && keywords[0].topics[0].id==11018 && keywords[1].root==1018 && keywords[1].topics[0].accented);
+ for(const auto bad:{"", "1\tNo group\n", "#1\t1\n2\tA\n2\tB\n", "#1\t1\n#1\t1\n", "#1\t1\n2\tA\t2\n", "#0\t1\n"})reject([&]{parse_keywords(bad);});
  const auto g=graph();const auto text=write_navigation(g);check(text.find("NAV_V5")!=std::string::npos);check(write_navigation(parse_navigation(text))==text);
  const auto legacy=legacy_navigation(g,2);check(legacy.items.size()==3 && !has_story_rules(legacy));
  const Checkpoint old{1,{0,0,85},{11,10,12}};const auto older=encode_checkpoint(legacy,7,old);check(decode_checkpoint(Bytes(older),g,7).inventory==old.inventory);

@@ -16,20 +16,29 @@ void validate(const StageSetup& s) {
   for(const auto& a:s.access)if(!a.object || a.index>31 || !accesses.insert({a.object,a.index}).second || (a.panorama ? (a.scene<1010101 || a.scene>1010106 || a.left<0 || a.right>3600 || a.top< -900 || a.bottom>900) : (!backgrounds.count(a.scene) || a.left<0 || a.right>640 || a.top<0 || a.bottom>480)) || a.left>=a.right || a.top>=a.bottom || a.cursor>255 || a.event>255)throw ParseError("invalid stage access");
   for(const auto& l:s.layers)if(!l.object || l.presentation>31 || !l.frames || l.frames>64 || l.order>2000 || (l.panorama ? (l.scene<1010101 || l.scene>1010106 || l.channel>31) : (!backgrounds.count(l.scene) || l.channel>1 || !name_ok(l.image) || l.x<0 || l.x>=640 || l.y<0 || l.y>=480)) || !std::isfinite(l.fps) || (l.animated && (l.fps<=0 || l.fps>60 || (l.mode!=4 && l.mode!=16))) || (!l.animated && l.frames!=1))throw ParseError("invalid stage layer");
   for(const auto& d:s.dialogues)if(!d.id || d.area!="A01" || !name_ok(d.stem) || !dialogues.insert(d.id).second)throw ParseError("invalid stage dialogue");
+  std::set<std::uint32_t> objects;
+  if(s.objects.size()>128)throw ParseError("stage object count limit");
+  for(const auto& o:s.objects)if(!o.id || !objects.insert(o.id).second || o.name.size()>96 || !std::all_of(o.name.begin(),o.name.end(),[](unsigned char c){return c>=32 && c<=126;}) || (!o.icon.empty() && !name_ok(o.icon)))throw ParseError("invalid stage object");
+  std::set<std::pair<std::uint32_t,std::uint32_t>> sounds;
+  if(s.ambient.size()>128)throw ParseError("stage sound count limit");
+  for(const auto& a:s.ambient)if(!backgrounds.count(a.node) || !a.sound || a.volume>100 || a.master>100 || !name_ok(a.stem) || !sounds.insert({a.node,a.sound}).second)throw ParseError("invalid stage sound");
 }
 }
 std::string write_stage(const StageSetup& s) {
-  std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(12)<<"JERUSALEM_A01_STAGE_V1\n";
+  std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(12)<<(s.objects.empty() && s.ambient.empty()?"JERUSALEM_A01_STAGE_V1\n":"JERUSALEM_A01_STAGE_V2\n");
   for(const auto& b:s.backgrounds)out<<"background "<<b.id<<' '<<b.image<<' '<<b.x<<' '<<b.y<<'\n';
   for(const auto& a:s.access)out<<"access "<<a.object<<' '<<a.scene<<' '<<a.index<<' '<<a.panorama<<' '<<a.enabled<<' '<<a.left<<' '<<a.top<<' '<<a.right<<' '<<a.bottom<<' '<<a.cursor<<' '<<a.event<<'\n';
   for(const auto& l:s.layers)out<<"layer "<<l.object<<' '<<l.presentation<<' '<<l.scene<<' '<<l.panorama<<' '<<l.animated<<' '<<(l.image.empty()?"-":l.image)<<' '<<l.channel<<' '<<l.frames<<' '<<l.mode<<' '<<l.order<<' '<<l.x<<' '<<l.y<<' '<<l.fps<<'\n';
   for(const auto& d:s.dialogues)out<<"dialogue "<<d.id<<' '<<d.area<<' '<<d.stem<<'\n';
+  for(const auto& o:s.objects)out<<"object "<<o.id<<' '<<std::quoted(o.name)<<' '<<std::quoted(o.icon)<<'\n';
+  for(const auto& a:s.ambient)out<<"sound "<<a.node<<' '<<a.sound<<' '<<a.volume<<' '<<a.master<<' '<<a.stem<<'\n';
   return out.str();
 }
 StageSetup parse_stage(const std::string& text) {
   if(text.size()>128*1024 || text.find('\0')!=std::string::npos)throw ParseError("invalid stage text");
   std::istringstream in(text);in.imbue(std::locale::classic());std::string line,kind,extra;StageSetup s;
-  if(!std::getline(in,line) || line!="JERUSALEM_A01_STAGE_V1")throw ParseError("unsupported stage version");
+  if(!std::getline(in,line) || (line!="JERUSALEM_A01_STAGE_V1" && line!="JERUSALEM_A01_STAGE_V2"))throw ParseError("unsupported stage version");
+  const bool extended=line=="JERUSALEM_A01_STAGE_V2";
   unsigned count=0;
   while(std::getline(in,line)) {
     if(++count>512 || line.size()>512)throw ParseError("stage text limit");
@@ -38,6 +47,8 @@ StageSetup parse_stage(const std::string& text) {
     else if(kind=="access"){StageAccess a{};if(!(row>>a.object>>a.scene>>a.index>>a.panorama>>a.enabled>>a.left>>a.top>>a.right>>a.bottom>>a.cursor>>a.event))throw ParseError("invalid access row");s.access.push_back(a);}
     else if(kind=="layer"){StageLayer l{};if(!(row>>l.object>>l.presentation>>l.scene>>l.panorama>>l.animated>>l.image>>l.channel>>l.frames>>l.mode>>l.order>>l.x>>l.y>>l.fps))throw ParseError("invalid layer row");if(l.image=="-")l.image.clear();s.layers.push_back(l);}
     else if(kind=="dialogue"){DialogueResource d{};if(!(row>>d.id>>d.area>>d.stem))throw ParseError("invalid dialogue row");s.dialogues.push_back(d);}
+    else if(kind=="object" && extended){StageObject o{};if(!(row>>o.id>>std::quoted(o.name)>>std::quoted(o.icon)))throw ParseError("invalid object row");s.objects.push_back(o);}
+    else if(kind=="sound" && extended){SceneAmbient a{};if(!(row>>a.node>>a.sound>>a.volume>>a.master>>a.stem))throw ParseError("invalid stage sound row");s.ambient.push_back(a);}
     else throw ParseError("unknown stage record");
     if(row>>extra)throw ParseError("extra stage field");
   }

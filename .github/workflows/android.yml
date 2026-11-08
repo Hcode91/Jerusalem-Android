@@ -22,6 +22,14 @@ jobs:
         run: cmake --build build-host --parallel 2
       - name: Run regression and malformed-input tests
         run: ctest --test-dir build-host --output-on-failure --output-junit host-tests.xml
+      - name: Package original-free A01 camp integration fixture
+        run: python3 tools/export_a01_smoke_fixture.py build-host/a01-smoke-model a01-smoke-fixture.zip
+      - name: Upload original-free integration fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: a01-smoke-fixture
+          path: a01-smoke-fixture.zip
+          if-no-files-found: error
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
@@ -107,6 +115,10 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - uses: actions/download-artifact@v4
+        with:
+          name: a01-smoke-fixture
+          path: .
       - name: Launch native inspector in Android emulator
         id: emulator_smoke
         uses: reactivecircus/android-emulator-runner@v2

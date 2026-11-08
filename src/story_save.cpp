@@ -32,7 +32,7 @@ std::uint64_t rules(const SceneGraph& graph,const StageSetup& setup){auto h=chec
 }
 std::vector<std::uint8_t> A01Story::save(const StoryResume& resume,std::uint64_t assets) const {
  if(!serial_)throw ParseError("story has not started");
- Writer w;w.b={'J','R','N','S','T','O','R','Y'};w.u(1);w.u(rules(items_.graph_,setup_),8);w.u(assets,8);
+ Writer w;w.b={'J','R','N','S','T','O','R','Y'};w.u(2);w.u(rules(items_.graph_,setup_),8);w.u(assets,8);
  w.camera(resume.camera);w.u(resume.media_ms,8);w.u(resume.visual_ms,8);w.u(resume.selected.value_or(0));
  w.u(scene_);w.u(phase_);w.u(character_);w.u(deadline_kind_);w.u(serial_,8);w.u(clock_,8);w.u(deadline_,8);
  w.u(puzzle_,1);w.u(failed_,1);w.u(boundary_,1);w.u(bag_cleared_,1);
@@ -42,16 +42,19 @@ std::vector<std::uint8_t> A01Story::save(const StoryResume& resume,std::uint64_t
  w.u(graph_.exits.size());for(const auto& e:graph_.exits)w.u(e.enabled,1);
  w.u(playing_.has_value(),1);if(playing_)w.cue(*playing_);
  w.u(pending_.size());for(const auto& c:pending_)w.cue(c);
+ w.u(camp_,1);w.u(cards_given_,1);w.u(jug_,1);w.u(finished_,1);w.u(topics_);w.u(bowl_);w.u(cards_used_);w.u(random_);
+ w.u(items_.inventory_.size());for(auto id:items_.inventory_)w.u(id);
  w.u(crc(Bytes(w.b)));if(w.b.size()>65536)throw ParseError("story save size limit");
  InteractionState checked_items(items_.graph_);A01Story checked(setup_,items_.graph_,checked_items);(void)checked.load(Bytes(w.b),assets);
  return w.b;
 }
-StoryResume A01Story::load(Bytes bytes,std::uint64_t assets) {
+StoryResume A01Story::load(Bytes bytes,std::uint64_t assets,std::optional<std::uint64_t> legacy_assets) {
  if(bytes.size()<128 || bytes.size()>65536 || !bytes.is(0,"JRNSTORY"))throw ParseError("not a native story save");
  if(crc(bytes.slice(0,bytes.size()-4))!=bytes.u32(bytes.size()-4))throw ParseError("story save checksum mismatch");
- Reader r{bytes.slice(0,bytes.size()-4),8};if(r.u()!=1)throw ParseError("unsupported story save version");
- if(r.u(8)!=rules(items_.graph_,setup_))throw ParseError("story save rules differ; re-import matching game connections");
- if(r.u(8)!=assets)throw ParseError("story save game data differs from imported assets");
+ Reader r{bytes.slice(0,bytes.size()-4),8};const auto version=r.u();if(version!=1 && version!=2)throw ParseError("unsupported story save version");
+ auto saved_setup=setup_;if(version==1){saved_setup.objects.clear();saved_setup.ambient.clear();}
+ if(r.u(8)!=rules(items_.graph_,saved_setup))throw ParseError("story save rules differ; re-import matching game connections");
+ if(r.u(8)!=(version==1?legacy_assets.value_or(assets):assets))throw ParseError("story save game data differs from imported assets");
  StoryResume resume;resume.camera=r.camera();resume.media_ms=r.u(8);resume.visual_ms=r.u(8);const auto selected=r.u();if(selected)resume.selected=static_cast<std::uint32_t>(selected);
  const auto scene=r.u(),phase=r.u(),character=r.u(),kind=r.u(),serial=r.u(8),clock=r.u(8),deadline=r.u(8);
  const bool puzzle=r.flag(),failed=r.flag(),boundary=r.flag(),cleared=r.flag();
@@ -70,9 +73,11 @@ StoryResume A01Story::load(Bytes bytes,std::uint64_t assets) {
  if(cleared)restored.inventory_.clear();
  std::set<std::pair<std::uint32_t,std::uint32_t>> allowed,shown;
  for(const auto& l:setup_.layers)allowed.insert({l.object,l.presentation});
- for(auto id:{10030U,10002U,10003U,10004U,10001U,10005U,10018U,10020U,10031U})allowed.insert({id,0});
+ for(auto id:{10030U,10002U,10003U,10004U,10001U,10005U,10018U,10019U,10020U,10031U})allowed.insert({id,0});
+ for(const auto& o:setup_.objects)allowed.insert({o.id,0});
  for(auto id:{10006U,10008U,10009U})for(unsigned p=0;p<2;++p)allowed.insert({id,p});
  for(unsigned p=0;p<3;++p)allowed.insert({10014,p});
+ for(unsigned p=0;p<4;++p)allowed.insert({10032,p});
  const auto count=r.count(512);for(std::size_t i=0;i<count;++i){const auto id=static_cast<std::uint32_t>(r.u()),pres=static_cast<std::uint32_t>(r.u());if(!allowed.count({id,pres}) || !shown.insert({id,pres}).second)throw ParseError("invalid saved presentation");}
  auto enabled=r.flags(setup_.access.size());
  if(r.count(items_.graph_.nodes.size())!=items_.graph_.nodes.size())throw ParseError("saved channel map differs");
@@ -88,17 +93,40 @@ StoryResume A01Story::load(Bytes bytes,std::uint64_t assets) {
   if(c.kind==StoryCue::Node){scene_node(graph,c.id);if(!c.asset.empty())throw ParseError("invalid node cue asset");}
   else if(c.kind==StoryCue::Puzzle){if(!c.asset.empty() || std::none_of(setup_.backgrounds.begin(),setup_.backgrounds.end(),[&](const StageBackground& b){return b.id==c.id;}))throw ParseError("invalid puzzle cue");}
   else if(c.kind==StoryCue::Speech){if(!c.asset.empty() || std::none_of(setup_.dialogues.begin(),setup_.dialogues.end(),[&](const DialogueResource& d){return d.id==c.id;}))throw ParseError("invalid saved speech");}
-  else if(c.kind==StoryCue::Movie){const std::vector<std::string> movies{"A01S01_AN001","A01S01_AN002","A01S01_AN003","A01S01_AN004","A01S01_AN006","A01S01_AN007A","A01S01_AN007B","A01S01_AN007C","A01S01_AN009"};if(std::find(movies.begin(),movies.end(),c.asset)==movies.end())throw ParseError("invalid saved movie");}
-  else if(c.id!=10023 || c.asset!="First escape complete. The next conversation/topic puzzle is not implemented yet.")throw ParseError("invalid boundary cue");
+  else if(c.kind==StoryCue::Movie){const std::vector<std::string> movies{"A01S01_AN001","A01S01_AN002","A01S01_AN003","A01S01_AN004","A01S01_AN006","A01S01_AN006B","A01S01_AN007A","A01S01_AN007B","A01S01_AN007C","A01S01_AN009","A01S01_AN010","A01S01_AN011","A01S01_AN011B","A01S01_AN013","A01S01_AN014"};if(std::find(movies.begin(),movies.end(),c.asset)==movies.end())throw ParseError("invalid saved movie");}
+  else if(!((version==1 && c.id==10023 && c.asset=="First escape complete. The next conversation/topic puzzle is not implemented yet.") || (version==2 && c.id==2 && c.asset=="A01 complete. The original game continues in A02; A02 gameplay is not implemented yet.")))throw ParseError("invalid boundary cue");
  };
  if(playing){if(playing->kind!=StoryCue::Movie && playing->kind!=StoryCue::Speech)throw ParseError("invalid playing cue");valid_cue(*playing);}else if(resume.media_ms)throw ParseError("media offset without playback");
  for(const auto& c:pending)valid_cue(c);
+ bool camp=false,cards_given=false,jug=false,finished=false;unsigned topics=0,bowl=0,cards_used=0;std::uint32_t random=1;
+ bool restored_boundary=boundary;
+ if(version==2){
+   camp=r.flag();cards_given=r.flag();jug=r.flag();finished=r.flag();topics=static_cast<unsigned>(r.u());bowl=static_cast<unsigned>(r.u());cards_used=static_cast<unsigned>(r.u());random=static_cast<std::uint32_t>(r.u());
+   const std::vector<unsigned> prefixes{0,1,5,7,15,47,111,127};
+   if((topics!=0 && topics!=1 && topics!=3) || bowl>3 || std::find(prefixes.begin(),prefixes.end(),cards_used)==prefixes.end() ||
+      (!camp && (topics || bowl || cards_given || cards_used || jug || finished)) || (camp && !cleared) ||
+      (cards_given && topics!=3) || (cards_used && !cards_given) || (bowl>=2 && !jug) ||
+      (finished && (bowl!=3 || cards_used!=127)) || (boundary && !finished))throw ParseError("invalid saved camp progress");
+   std::vector<std::uint32_t> inventory;const auto count=r.count(32);std::set<std::uint32_t> seen;
+   for(std::size_t i=0;i<count;++i){const auto id=static_cast<std::uint32_t>(r.u());if(!seen.insert(id).second)throw ParseError("duplicate saved inventory item");inventory.push_back(id);}
+   std::set<std::uint32_t> expected(restored.inventory_.begin(),restored.inventory_.end());
+   if(camp){expected.clear();if(bowl==1)expected.insert(10018);if(bowl==2)expected.insert(10019);if(jug)expected.insert(10020);
+     if(cards_given)for(unsigned id=10023;id<=10029;++id)if(!(cards_used&(1U<<(id-10023))))expected.insert(id);
+   }
+   if(seen!=expected)throw ParseError("saved inventory conflicts with camp progress");
+   restored.inventory_=std::move(inventory);
+ }else if(cleared && (scene==10023 || boundary || std::any_of(pending.begin(),pending.end(),[](const StoryCue& c){return c.kind==StoryCue::Boundary;}))){
+   // Milestone-14 camp stops become playable, without discarding the user's bag/camera.
+   camp=true;restored_boundary=false;
+   pending.erase(std::remove_if(pending.begin(),pending.end(),[](const StoryCue& c){return c.kind==StoryCue::Boundary;}),pending.end());
+ }
  if(r.p!=r.b.size())throw ParseError("trailing story save data");
  if(resume.selected && !restored.owns(*resume.selected) && *resume.selected!=10010)throw ParseError("saved selected item is not owned");
  // Commit only after every record has been checked.
  items_=std::move(restored);graph_=std::move(graph);shown_=std::move(shown);enabled_=std::move(enabled);channels_=std::move(channels);
  serial_=serial;clock_=clock;deadline_=deadline;scene_=static_cast<std::uint32_t>(scene);phase_=static_cast<std::uint32_t>(phase);character_=static_cast<std::uint32_t>(character);deadline_kind_=static_cast<unsigned>(kind);
- puzzle_=puzzle;failed_=failed;boundary_=boundary;bag_cleared_=cleared;playing_.reset();pending_=std::move(pending);if(playing)pending_.push_front(*playing);
+ puzzle_=puzzle;failed_=failed;boundary_=restored_boundary;bag_cleared_=cleared;
+ camp_=camp;cards_given_=cards_given;jug_=jug;finished_=finished;topics_=topics;bowl_=bowl;cards_used_=cards_used;random_=random;playing_.reset();pending_=std::move(pending);if(playing)pending_.push_front(*playing);
  return resume;
 }
 }
