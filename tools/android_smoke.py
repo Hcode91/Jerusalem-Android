@@ -441,6 +441,16 @@ def puzzle_tap(x, y):
     wait_for(locate, 'Game surface and native puzzle viewport did not reach a matching layout')
 
 
+def story_puzzle_ready(logs, scene):
+    """A fresh final puzzle cue, not an earlier visit or an intermediate speech view."""
+    cues = re.findall(rb'A01 story cue: kind=(\d+) id=(\d+) serial=(\d+)', logs)
+    return bool(cues) and tuple(map(int, cues[-1][:2])) == (1, scene)
+
+
+def wait_for_story_puzzle(scene, after, message):
+    wait_for(lambda: story_puzzle_ready(game_logs()[after:], scene), message)
+
+
 def full_a01_camp_smoke():
     """The camp state is produced by host route tests; the Android app has no skip hook."""
     adb('shell', 'am', 'force-stop', PACKAGE)
@@ -466,26 +476,27 @@ def full_a01_camp_smoke():
     click_scrolling('Inventory');click('Combine items');click('Synthetic item 10020');click('Synthetic item 10018')
     wait_for(lambda: b'result=10019' in game_logs(), 'Bowl/jug combination did not produce full bowl')
     for topic, finished in (('Synthetic Hegira', 11021), ('Synthetic Allah', 11024)):
+        after = len(game_logs())
         click_scrolling('Talk');click(topic)
         wait_for(lambda: f'A01 story cue: kind=3 id={finished}'.encode() in game_logs(), 'Camp topic dialogue chain did not finish')
-        # Require its final return, not an earlier visit to the same puzzle.
-        time.sleep(1)
-        wait_for(lambda: b'A01 story: puzzle 10023.' in current_ui(), 'Camp topic did not return control')
+        wait_for_story_puzzle(10023, after, 'Camp topic did not return control')
+    after = len(game_logs())
     puzzle_tap(279, 221) # Card table.
-    wait_for(lambda: b'A01 story: puzzle 10037.' in current_ui(), 'Card-table access failed')
+    wait_for_story_puzzle(10037, after, 'Card-table access failed')
     def use(item, x, y):
         selection = f'Using Synthetic item {item}'.encode();count = game_logs().count(selection)
         click_scrolling('Inventory');click('Use item');click(f'Synthetic item {item}')
         wait_for(lambda: game_logs().count(selection) > count, 'Inventory item was not selected')
         puzzle_tap(x, y)
+    after = len(game_logs())
     use(10024, 500, 150) # Wrong card at Abraham: retain the bag and return.
-    wait_for(lambda: re.search(rb'A01 story cue: kind=3 id=1104[012]', game_logs()), 'Wrong card did not play its verified response')
-    wait_for(lambda: b'A01 story: puzzle 10037.' in current_ui(), 'Wrong card did not return to the table')
+    wait_for(lambda: re.search(rb'A01 story cue: kind=3 id=1104[012]', game_logs()[after:]), 'Wrong card did not play its verified response')
+    wait_for_story_puzzle(10037, after, 'Wrong card did not return to the table')
     for i, (card, x) in enumerate(((10023, 500), (10025, 350), (10024, 200), (10026, 50), (10028, 350), (10029, 200), (10027, 50))):
+        after = len(game_logs())
         use(card, x, 150)
-        time.sleep(1)
         expected = 10023 if card == 10027 else 10037
-        wait_for(lambda: f'A01 story: puzzle {expected}.'.encode() in current_ui(), f'Card {card} did not finish')
+        wait_for_story_puzzle(expected, after, f'Card {card} did not finish')
         if i == 0:
             click_scrolling('Menu');click_menu('Save Game')
             wait_for(lambda: b'Game saved.' in current_ui(), 'Camp progress save failed')
