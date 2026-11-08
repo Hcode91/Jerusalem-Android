@@ -407,12 +407,38 @@ def synthetic_menu_archive(bitmap, *, omitted=(), invalid=None, background=None)
     return b'ATIII'+bytes(3)+struct.pack('<III', len(entries), len(images), 255)+bytes(12)+entries+payload
 
 
+def screen_puzzle_point(xml, logs, x, y):
+    """Map renderer pixels to screen pixels only after the game layout settles."""
+    if not (0 <= x < 640 and 0 <= y < 480): raise ValueError('Puzzle point outside original image')
+    nodes = list(ET.fromstring(xml).iter('node'))
+    def bounds(label):
+        found = [node for node in nodes if node.get('content-desc') == label]
+        if len(found) != 1: return None
+        values = list(map(int, re.findall(r'-?\d+', found[0].get('bounds', ''))))
+        return values if len(values) == 4 and 0 <= values[0] < values[2] and 0 <= values[1] < values[3] else None
+    viewport, controls = bounds('Game viewport'), bounds('Game controls')
+    # Controls are absent while the original menu or a modal dialog is on top.
+    if viewport is None or controls is None: return None
+    pattern = (rb'A01 puzzle viewport: left=([-\d.]+) top=([-\d.]+) width=([-\d.]+) height=([-\d.]+) '
+               rb'output=(\d+)x(\d+) bottom=(\d+) image=(\d+)x(\d+)')
+    matches = re.findall(pattern, logs)
+    if not matches: return None
+    left, top, width, height = map(float, matches[-1][:4])
+    output_w, output_h, bottom, image_w, image_h = map(int, matches[-1][4:])
+    if min(width, height, output_w, output_h) <= 0 or (image_w, image_h) != (640, 480): return None
+    vx, vy, vr, vb = viewport
+    scale_x, scale_y = (vr-vx)/output_w, (vb-vy)/output_h
+    # Reject a menu-era inset instead of tapping with the earlier viewport.
+    if abs(bottom*scale_y-(controls[3]-controls[1])) > 1: return None
+    return round(vx+(left+x*width/640)*scale_x), round(vy+(top+y*height/480)*scale_y)
+
+
 def puzzle_tap(x, y):
-    pattern = rb'A01 puzzle viewport: left=([-\d.]+) top=([-\d.]+) width=([-\d.]+) height=([-\d.]+)'
-    matches = re.findall(pattern, game_logs())
-    if not matches: raise RuntimeError('No native puzzle viewport for hit testing')
-    left, top, width, height = map(float, matches[-1])
-    adb('shell', 'input', 'tap', str(round(left+x*width/640)), str(round(top+y*height/480)))
+    def locate():
+        point = screen_puzzle_point(current_ui(), game_logs(), x, y)
+        if point is None: return False
+        adb('shell', 'input', 'tap', str(point[0]), str(point[1]));return True
+    wait_for(locate, 'Game surface and native puzzle viewport did not reach a matching layout')
 
 
 def full_a01_camp_smoke():
