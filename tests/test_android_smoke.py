@@ -22,6 +22,43 @@ def ui(*nodes):
 
 
 class SmokeHarnessTests(unittest.TestCase):
+    def test_puzzle_tap_includes_captured_android_status_bar_offset(self):
+        # Failed Actions capture: 320x640 screen, SDL surface below 24px status bar.
+        xml = ui({'content-desc': 'Game viewport', 'bounds': '[0,24][320,640]'},
+                 {'content-desc': 'Game controls', 'bounds': '[0,549][320,640]'})
+        logs = b'A01 puzzle viewport: left=0.000 top=174.500 width=320.000 height=240.000 output=320x616 bottom=91 image=640x480'
+        self.assertEqual(smoke.screen_puzzle_point(xml, logs, 140, 315), (70, 356))
+        self.assertEqual(smoke.screen_puzzle_point(xml, logs, 305, 155), (152, 276))
+
+    def test_puzzle_tap_rejects_menu_inset_until_game_controls_match(self):
+        xml = ui({'content-desc': 'Game viewport', 'bounds': '[0,24][320,640]'},
+                 {'content-desc': 'Game controls', 'bounds': '[0,549][320,640]'})
+        stale = b'A01 puzzle viewport: left=0.000 top=142.000 width=320.000 height=240.000 output=320x616 bottom=156 image=640x480'
+        fresh = b'A01 puzzle viewport: left=0.000 top=174.500 width=320.000 height=240.000 output=320x616 bottom=91 image=640x480'
+        self.assertIsNone(smoke.screen_puzzle_point(xml, stale, 140, 315))
+        with patch.object(smoke, 'current_ui', return_value=xml), patch.object(smoke, 'game_logs', side_effect=[stale, stale+b'\n'+fresh]), patch.object(smoke, 'adb') as adb, patch.object(smoke.time, 'sleep'):
+            smoke.puzzle_tap(140, 315)
+            adb.assert_called_once_with('shell', 'input', 'tap', '70', '356')
+
+    def test_puzzle_tap_supports_fullscreen_and_scaled_render_outputs(self):
+        fullscreen = ui({'content-desc': 'Game viewport', 'bounds': '[0,0][1280,720]'},
+                        {'content-desc': 'Game controls', 'bounds': '[0,640][1280,720]'})
+        logs = b'A01 puzzle viewport: left=256.000 top=64.000 width=768.000 height=576.000 output=1280x720 bottom=80 image=640x480'
+        self.assertEqual(smoke.screen_puzzle_point(fullscreen, logs, 140, 315), (424, 442))
+        scaled = ui({'content-desc': 'Game viewport', 'bounds': '[10,30][650,510]'},
+                    {'content-desc': 'Game controls', 'bounds': '[10,430][650,510]'})
+        logs = b'A01 puzzle viewport: left=256.000 top=128.000 width=768.000 height=576.000 output=1280x960 bottom=160 image=640x480'
+        self.assertEqual(smoke.screen_puzzle_point(scaled, logs, 140, 315), (222, 283))
+
+    def test_puzzle_tap_never_uses_movie_geometry_or_hidden_controls(self):
+        xml = ui({'content-desc': 'Game viewport', 'bounds': '[0,24][320,640]'},
+                 {'content-desc': 'Game controls', 'bounds': '[0,549][320,640]'})
+        movie = b'A01 puzzle viewport: left=0.000 top=292.500 width=320.000 height=20.000 output=320x616 bottom=91 image=32x2'
+        self.assertIsNone(smoke.screen_puzzle_point(xml, movie, 140, 315))
+        self.assertIsNone(smoke.screen_puzzle_point(ui(), movie, 140, 315))
+        self.assertIsNone(smoke.screen_puzzle_point(xml, b'', 140, 315))
+        with self.assertRaises(ValueError): smoke.screen_puzzle_point(xml, movie, 640, 315)
+
     def test_current_ui_retries_idle_and_reads_only_a_fresh_dump(self):
         xml = ui({'text': 'New Game', 'enabled': 'true', 'bounds': '[0,0][100,48]'})
         replies = [b'', b'ERROR: could not get idle state.', b'', b'UI hierchary dumped to file', xml]

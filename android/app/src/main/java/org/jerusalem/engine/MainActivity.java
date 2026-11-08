@@ -130,6 +130,8 @@ public class MainActivity extends SDLActivity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (mBrokenLibraries) return;
+        mLayout.setContentDescription("Game viewport");
+        mLayout.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         dataRoot = new File(getFilesDir(), "game-data");
         if (!dataRoot.isDirectory() && !dataRoot.mkdirs()) {
@@ -139,6 +141,8 @@ public class MainActivity extends SDLActivity {
         subtitlesEnabled = getPreferences(MODE_PRIVATE).getBoolean("subtitles", true);
         nativeOptions(getPreferences(MODE_PRIVATE).getInt("volume", 100), getPreferences(MODE_PRIVATE).getBoolean("markers", true));
         LinearLayout panel = new LinearLayout(this); controlsPanel = panel;
+        panel.setContentDescription("Game controls");
+        panel.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
         panel.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> { if (view.getVisibility() == View.VISIBLE) nativeViewportBottom(bottom-top); });
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setBackgroundColor(0xEE18222B);

@@ -283,6 +283,7 @@ class Renderer {
   int width_=0,height_=0;
   float zoom_=1,pan_x_=0,pan_y_=0;
   SDL_FRect logged_puzzle_rect_{};
+  int logged_output_width_=0,logged_output_height_=0,logged_bottom_=0;
   std::string preview_;
  public:
   ~Renderer() {
@@ -439,8 +440,9 @@ class Renderer {
         SDL_FRect dst{(float(w)-float(width_)*scale)/2+pan_x_*float(w),
                       64+(float(h-64-bottom)-float(height_)*scale)/2+pan_y_*float(h),float(width_)*scale,float(height_)*scale};
         SDL_RenderTexture(renderer_,texture_,nullptr,&dst);
-        if(game_mode_ && (dst.x!=logged_puzzle_rect_.x || dst.y!=logged_puzzle_rect_.y || dst.w!=logged_puzzle_rect_.w || dst.h!=logged_puzzle_rect_.h)){
-          logged_puzzle_rect_=dst;__android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 puzzle viewport: left=%.3f top=%.3f width=%.3f height=%.3f",dst.x,dst.y,dst.w,dst.h);
+        if(game_mode_ && (dst.x!=logged_puzzle_rect_.x || dst.y!=logged_puzzle_rect_.y || dst.w!=logged_puzzle_rect_.w || dst.h!=logged_puzzle_rect_.h || w!=logged_output_width_ || h!=logged_output_height_ || bottom!=logged_bottom_)){
+          logged_puzzle_rect_=dst;logged_output_width_=w;logged_output_height_=h;logged_bottom_=bottom;
+          __android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 puzzle viewport: left=%.3f top=%.3f width=%.3f height=%.3f output=%dx%d bottom=%d image=%dx%d",dst.x,dst.y,dst.w,dst.h,w,h,bottom,width_,height_);
         }
         if(!game_mode_ || developer_tools.load() || show_hotspots.load())for(const auto& a:puzzle_markers_){const float x=dst.x+(a.left+a.right)*0.5f*scale,y=dst.y+(a.top+a.bottom)*0.5f*scale;
           SDL_SetRenderDrawColor(renderer_,90,200,255,255);SDL_FRect mark{x-12,y-12,24,24};SDL_RenderRect(renderer_,&mark);SDL_RenderDebugText(renderer_,x+15,y-4,((a.cursor==61?std::string("ACT "):std::string("USE "))+(game_mode_&&!developer_tools.load()?std::string{}:std::to_string(a.object))).c_str());}
