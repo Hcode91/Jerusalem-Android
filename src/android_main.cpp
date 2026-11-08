@@ -503,7 +503,7 @@ class InspectionScene {
     const char* storage=SDL_GetAndroidInternalStoragePath();if(!storage)throw jerusalem::ParseError("Android game-data storage unavailable");
     return std::filesystem::path(storage)/"game-data";
   }
-  void abandon_story() {art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();story_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
+  void abandon_story() {story_readiness_logged_=false;art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();story_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
   void story_error(const std::exception& error) {story_halted_=true;audio_.stop();clear_dialogue();movie_.reset();story_media_=0;report(std::string("A01 story stopped: ")+error.what()+". Tap Start A01 story to restart.");}
   jerusalem::Bitmap art_image(const std::string& name) {
     if(const auto found=art_cache_.find(name);found!=art_cache_.end())return found->second;
@@ -559,9 +559,11 @@ class InspectionScene {
     if(seek.frames)renderer_.movie_frame(movie_->image());
     movie_clock_start(seek.position_ms);report("Playing movie: "+cue.asset);
   }
+  bool story_readiness_logged_=false;
   void pump_story() {
     if(!story_)return;
     while(const auto cue=story_->next()) {
+      story_readiness_logged_=false;
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 story cue: kind=%u id=%u serial=%llu",unsigned(cue->kind),cue->id,static_cast<unsigned long long>(cue->serial));
       if(cue->kind==jerusalem::StoryCue::Node || cue->kind==jerusalem::StoryCue::Puzzle){
         audio_.stop();clear_dialogue();movie_.reset();node_=cue->kind==jerusalem::StoryCue::Node?std::optional<std::uint32_t>(cue->id):std::nullopt;
@@ -573,6 +575,12 @@ class InspectionScene {
         start_story_movie(*cue,offset);story_media_=cue->serial;break;
       }else if(cue->kind==jerusalem::StoryCue::Speech){story_media_=cue->serial;const auto offset=resume_media_;resume_media_=0;play_dialogue(cue->id,offset);break;}
       else {report(cue->asset);publish_inventory();}
+    }
+    if(!story_->busy() && !story_->boundary() && !story_readiness_logged_) {
+      std::string inventory;
+      for(const auto item:interactions_->inventory()){if(!inventory.empty())inventory+=",";inventory+=std::to_string(item);}
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 story ready: scene=%u puzzle=%u inventory=[%s]",story_->scene(),unsigned(story_->puzzle()),inventory.c_str());
+      story_readiness_logged_=true;
     }
   }
   std::string last_subtitle_;
