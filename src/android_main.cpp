@@ -488,7 +488,7 @@ class InspectionScene {
   std::uint64_t movie_time() {std::lock_guard<std::mutex> guard(movie_clock_mutex_);return movie_offset_+(movie_paused_?movie_pause_at_:SDL_GetTicks())-movie_start_-movie_paused_total_;}
   void movie_clock_start(std::uint64_t offset=0){std::lock_guard<std::mutex> guard(movie_clock_mutex_);movie_start_=SDL_GetTicks();movie_offset_=offset;movie_paused_total_=0;if(movie_paused_)movie_pause_at_=movie_start_;}
   std::unique_ptr<jerusalem::A01Story> story_;
-  std::unique_ptr<jerusalem::StageArt> story_art_,system_art_;
+  std::unique_ptr<jerusalem::StageArt> story_art_,a02_art_,system_art_;
   std::unique_ptr<jerusalem::AqcAnimation> story_animation_;
   std::map<std::string,jerusalem::Bitmap> art_cache_;
   std::size_t art_cache_bytes_=0;
@@ -503,12 +503,17 @@ class InspectionScene {
     const char* storage=SDL_GetAndroidInternalStoragePath();if(!storage)throw jerusalem::ParseError("Android game-data storage unavailable");
     return std::filesystem::path(storage)/"game-data";
   }
-  void abandon_story() {story_readiness_logged_=false;art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();story_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
+  void abandon_story() {story_readiness_logged_=false;art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();story_art_.reset();a02_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
   void story_error(const std::exception& error) {story_halted_=true;audio_.stop();clear_dialogue();movie_.reset();story_media_=0;report(std::string("A01 story stopped: ")+error.what()+". Tap Start A01 story to restart.");}
   jerusalem::Bitmap art_image(const std::string& name) {
     if(const auto found=art_cache_.find(name);found!=art_cache_.end())return found->second;
     jerusalem::Bitmap image;
-    try{image=story_art_->image(name);}catch(const jerusalem::ParseError& e){if(std::string(e.what()).find("missing AT3 image:")!=0)throw;image=system_art_->image(name);}
+    // Area art first (A01.AT3, then A02.AT3 when A02 is enabled), then SY.AT3.
+    bool found=false;
+    for(const auto* art:{story_art_.get(),a02_art_.get()})if(art && !found){
+      try{image=art->image(name);found=true;}catch(const jerusalem::ParseError& e){if(std::string(e.what()).find("missing AT3 image:")!=0)throw;}
+    }
+    if(!found)image=system_art_->image(name);
     if(art_cache_bytes_+image.rgba.size()>48*1024*1024){art_cache_.clear();art_cache_bytes_=0;}
     art_cache_bytes_+=image.rgba.size();art_cache_.emplace(name,image);return image;
   }
@@ -551,8 +556,20 @@ class InspectionScene {
       renderer_.exits(std::move(exits));renderer_.items(std::move(markers));
     }
   }
+  // Original area folder (A01, A02, ...) under the import root or its DATA folder.
+  std::filesystem::path area_directory(const std::string& area) {
+    std::optional<std::filesystem::path> found;
+    for(const auto& base:{data_root(),data_root()/"data",data_root()/"DATA"})if(std::filesystem::is_directory(base) && !std::filesystem::is_symlink(base))
+      for(const auto& e:std::filesystem::directory_iterator(base)){
+        auto n=e.path().filename().string();for(auto& c:n)if(c>='a'&&c<='z')c=char(c-'a'+'A');
+        if(n==area && e.is_directory() && !e.is_symlink()){if(found && std::filesystem::canonical(*found)!=std::filesystem::canonical(e.path()))throw jerusalem::ParseError("ambiguous area folder: "+area);found=e.path();}
+      }
+    if(!found)throw jerusalem::ParseError("missing original area folder: "+area);
+    return *found;
+  }
   void start_story_movie(const jerusalem::StoryCue& cue,std::uint64_t offset) {
-    const auto path=jerusalem::game_file(data_root(),{"A01","PLA","ENG",cue.asset+".CI2"});
+    if(cue.asset.size()<4)throw jerusalem::ParseError("invalid movie name");
+    const auto path=jerusalem::game_file(data_root(),{cue.asset.substr(0,3),"PLA","ENG",cue.asset+".CI2"});
     movie_=std::make_unique<jerusalem::CinemaDecoder>(jerusalem::read_file(path));const auto& info=movie_->info();
     const auto seek=jerusalem::seek_cinema(*movie_,offset);movie_frames_=seek.frames;
     if(!info.sounds.empty()){audio_.begin_cinema(info.sounds.front(),cue.asset);audio_.cinema_pcm(seek.pcm);}
@@ -568,7 +585,9 @@ class InspectionScene {
       if(cue->kind==jerusalem::StoryCue::Node || cue->kind==jerusalem::StoryCue::Puzzle){
         audio_.stop();clear_dialogue();movie_.reset();node_=cue->kind==jerusalem::StoryCue::Node?std::optional<std::uint32_t>(cue->id):std::nullopt;
         renderer_.clear_image();prepare_story_picture();render_story_picture(true);renderer_.set_camera(cue->camera);publish_inventory();
-        if(cue->kind==jerusalem::StoryCue::Node){std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:navigation_->ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.at(cue->id),bindings);}else{std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:story_->setup().ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.begin()->second,bindings);}
+        if(cue->kind==jerusalem::StoryCue::Node){std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:navigation_->ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.at(cue->id),bindings);}else{std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:story_->setup().ambient)if(b.node==cue->id)bindings.push_back(b);
+          // resolve_ambient_asset searches the folder above a NODE path, i.e. the area folder.
+          ambience_.set(story_->area()==2?area_directory("A02")/"NODE"/"A02.AQC":assets_.begin()->second,bindings);}
         report("A01 story: "+std::string(story_->puzzle()?"puzzle ":"node ")+std::to_string(cue->id)+". Tap original hotspots; Inventory selects items.");
       }else if(cue->kind==jerusalem::StoryCue::Movie){
         ambience_.stop();clear_dialogue();audio_.stop();const auto offset=resume_media_;resume_media_=0;
@@ -729,8 +748,14 @@ class InspectionScene {
   void start_story(bool loading=false,bool automatic=false) {
     try {
       auto prepared=prepare_navigation();const auto bytes=jerusalem::read_file(data_root()/"a01-stage.tsv");
-      const auto setup=jerusalem::parse_stage(std::string(bytes.begin(),bytes.end()));
-      const auto tags=jerusalem::a01_story_assets(prepared.graph,setup,data_root());const auto tag=tags.current,legacy_tag=tags.legacy;
+      auto setup=jerusalem::parse_stage(std::string(bytes.begin(),bytes.end()));
+      // A02 continues after A01 only when its archive was imported; otherwise A01 ends at its boundary.
+      std::unique_ptr<jerusalem::StageArt> a02_art;
+      if(jerusalem::stage_has_a02(setup)){
+        try{jerusalem::validate_a02_assets(setup,data_root());a02_art=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{"A02.AT3"})));}
+        catch(const std::exception& e){__android_log_print(ANDROID_LOG_WARN,"Jerusalem","A02 disabled: %s",e.what());a02_art.reset();setup=jerusalem::a01_stage_subset(setup);}
+      }
+      const auto tags=jerusalem::a01_story_assets(prepared.graph,jerusalem::a01_stage_subset(setup),data_root());const auto tag=tags.current,legacy_tag=tags.legacy;
       auto art=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{"A01.AT3"})));
       auto system=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{"SY.AT3"})));
       const auto keyword_bytes=jerusalem::read_file(jerusalem::game_file(data_root(),{"KEYWORDS.INI"}));
@@ -740,7 +765,7 @@ class InspectionScene {
       if(loading){auto path=story_path(automatic);if(std::filesystem::file_size(path)>65536)throw jerusalem::ParseError("story save size limit");const auto bytes=jerusalem::read_file(path);resume=next->load(jerusalem::Bytes(bytes),tag,legacy_tag);}else next->start();
       abandon_story();audio_.stop();clear_dialogue();movie_.reset();ambience_.stop();node_.reset();selected_item_.reset();
       navigation_=std::move(prepared.graph);assets_=std::move(prepared.assets);interactions_=std::move(items);
-      story_art_=std::move(art);system_art_=std::move(system);story_=std::move(next);keywords_=std::move(keywords);topic_requested.store(false);story_assets_=tag;renderer_.game_mode(true);
+      story_art_=std::move(art);a02_art_=std::move(a02_art);system_art_=std::move(system);story_=std::move(next);keywords_=std::move(keywords);topic_requested.store(false);story_assets_=tag;renderer_.game_mode(true);
       story_tick_=SDL_GetTicks();story_elapsed_=resume.visual_ms;story_seconds_=0;story_halted_=false;resume_media_=resume.media_ms;selected_item_=resume.selected;
       renderer_.clear_image();story_base_={};if(story_->scene()){if(!story_->puzzle())node_=story_->scene();prepare_story_picture();render_story_picture(true);renderer_.set_camera(resume.camera);}
       publish_inventory();pump_story();last_autosave_=SDL_GetTicks();result(loading?"load":"new",true);
@@ -772,7 +797,7 @@ class InspectionScene {
     bool automatic=false;try{const auto manual=story_path(),autosave=story_path(true);automatic=std::filesystem::exists(autosave) && (!std::filesystem::exists(manual) || std::filesystem::last_write_time(autosave)>std::filesystem::last_write_time(manual));}catch(const std::exception&){ }
     start_story(true,automatic);
   }
-  unsigned flags() const {return story_?(1U | (story_->failed()?2U:0U) | (story_halted_?4U:0U) | (story_->busy()?8U:0U) | (story_->finished()?16U:0U)):0U;}
+  unsigned flags() const {return story_?(1U | (story_->failed()?2U:0U) | (story_halted_?4U:0U) | (story_->busy()?8U:0U) | (story_->finished() && story_->boundary()?16U:0U) | (story_->area()==2?128U:0U)):0U;}
   void volume(){audio_.volume();ambience_.volume();}
   void update_story() {
     const auto now=SDL_GetTicks();auto delta=now-story_tick_;story_tick_=now;
@@ -796,7 +821,7 @@ class InspectionScene {
         if(target->object==10010 && !selected && story_->local_item()) {selected_item_=10010;report("World object selected. Tap the character hotspot to use it.");return;}
         const bool done=!selected && !story_->puzzle() && std::any_of(navigation_->items.begin(),navigation_->items.end(),[&](const jerusalem::Collectible& i){return i.id==target->object;})
           ?story_->pickup(target->object):story_->activate(target->object,target->event,selected);
-        if(done){if(target->object==10014 && !story_->topics().empty())topic_requested.store(true);publish_inventory();pump_story();if(!story_->busy()){prepare_story_picture();render_story_picture();}if(!story_->busy())report("A01 interaction accepted at object "+std::to_string(target->object)+".");}
+        if(done){if((target->object==10014 || target->object==20001) && !story_->topics().empty())topic_requested.store(true);publish_inventory();pump_story();if(!story_->busy()){prepare_story_picture();render_story_picture();}if(!story_->busy())report("A01 interaction accepted at object "+std::to_string(target->object)+".");}
         else report("No supported action for that hotspot and selected item.");
         return;
       }
@@ -1066,7 +1091,7 @@ Java_org_jerusalem_engine_MainActivity_nativeExtractStage(JNIEnv* env,jclass,jby
     if(!input || env->GetArrayLength(input)!=811008)throw jerusalem::ParseError("select the original executable");
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(env->GetArrayLength(input)));
     env->GetByteArrayRegion(input,0,static_cast<jsize>(bytes.size()),reinterpret_cast<jbyte*>(bytes.data()));if(env->ExceptionCheck())return nullptr;
-    const auto model=jerusalem::write_stage(jerusalem::extract_a01_stage(jerusalem::Bytes(bytes)));
+    const auto model=jerusalem::write_stage(jerusalem::extract_story_stage(jerusalem::Bytes(bytes)));
     const auto result=env->NewByteArray(static_cast<jsize>(model.size()));
     if(result)env->SetByteArrayRegion(result,0,static_cast<jsize>(model.size()),reinterpret_cast<const jbyte*>(model.data()));
     return result;

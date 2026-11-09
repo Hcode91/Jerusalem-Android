@@ -37,4 +37,20 @@ StoryAssetTags a01_story_assets(const SceneGraph& graph,const StageSetup& setup,
   for(const auto& sound:sounds)(void)data(sound.second);
   return {tag,legacy};
 }
+void validate_a02_assets(const StageSetup& setup,const std::filesystem::path& root){
+  if(!stage_has_a02(setup))throw ParseError("stage model has no A02 records");
+  (void)game_file(root,{"A02.AT3"});
+  for(const auto& name:{"A02S02_AN016","A02S02_AN017","A02S02_AN018","A02S02_AN018B"})(void)game_file(root,{"A02","PLA","ENG",std::string(name)+".CI2"});
+  std::optional<std::filesystem::path> sample;
+  for(const auto& d:setup.dialogues)if(d.area=="A02"){const auto voice=resolve_dialogue(root,d);if(!sample)sample=voice.audio;}
+  if(!sample)throw ParseError("stage model has no A02 speech");
+  // resolve_ambient_asset searches the area folder above SOUND/ENG/<speech>.
+  const auto area_marker=sample->parent_path().parent_path().parent_path()/"NODE"/"A02.AQC";
+  for(const auto& a:setup.ambient)if(a.node>=20000 && a.node<30000)(void)resolve_ambient_asset(area_marker,a.stem);
+  const auto text=read_file(game_file(root,{"KEYWORDS.INI"}));const auto keywords=parse_keywords(std::string(text.begin(),text.end()));
+  for(const auto id:{22000U,100001U,22002U}){
+    unsigned count=0;for(const auto& group:keywords)for(const auto& entry:group.topics)if(entry.id==id)++count;
+    if(count!=1)throw ParseError("missing or ambiguous A02 topic in KEYWORDS.INI");
+  }
+}
 }

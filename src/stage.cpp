@@ -15,7 +15,7 @@ void validate(const StageSetup& s) {
   std::set<std::pair<std::uint32_t,std::uint32_t>> accesses;
   for(const auto& a:s.access)if(!a.object || a.index>31 || !accesses.insert({a.object,a.index}).second || (a.panorama ? (a.scene<1010101 || a.scene>1010106 || a.left<0 || a.right>3600 || a.top< -900 || a.bottom>900) : (!backgrounds.count(a.scene) || a.left<0 || a.right>640 || a.top<0 || a.bottom>480)) || a.left>=a.right || a.top>=a.bottom || a.cursor>255 || a.event>255)throw ParseError("invalid stage access");
   for(const auto& l:s.layers)if(!l.object || l.presentation>31 || !l.frames || l.frames>64 || l.order>2000 || (l.panorama ? (l.scene<1010101 || l.scene>1010106 || l.channel>31) : (!backgrounds.count(l.scene) || l.channel>1 || !name_ok(l.image) || l.x<0 || l.x>=640 || l.y<0 || l.y>=480)) || !std::isfinite(l.fps) || (l.animated && (l.fps<=0 || l.fps>60 || (l.mode!=4 && l.mode!=16))) || (!l.animated && l.frames!=1))throw ParseError("invalid stage layer");
-  for(const auto& d:s.dialogues)if(!d.id || d.area!="A01" || !name_ok(d.stem) || !dialogues.insert(d.id).second)throw ParseError("invalid stage dialogue");
+  for(const auto& d:s.dialogues)if(!d.id || (d.area!="A01" && d.area!="A02") || !name_ok(d.stem) || !dialogues.insert(d.id).second)throw ParseError("invalid stage dialogue");
   std::set<std::uint32_t> objects;
   if(s.objects.size()>128)throw ParseError("stage object count limit");
   for(const auto& o:s.objects)if(!o.id || !objects.insert(o.id).second || o.name.size()>96 || !std::all_of(o.name.begin(),o.name.end(),[](unsigned char c){return c>=32 && c<=126;}) || (!o.icon.empty() && !name_ok(o.icon)))throw ParseError("invalid stage object");
@@ -25,7 +25,7 @@ void validate(const StageSetup& s) {
 }
 }
 std::string write_stage(const StageSetup& s) {
-  std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(12)<<(s.objects.empty() && s.ambient.empty()?"JERUSALEM_A01_STAGE_V1\n":"JERUSALEM_A01_STAGE_V2\n");
+  std::ostringstream out;out.imbue(std::locale::classic());out<<std::setprecision(12)<<(stage_has_a02(s)?"JERUSALEM_STORY_STAGE_V3\n":s.objects.empty() && s.ambient.empty()?"JERUSALEM_A01_STAGE_V1\n":"JERUSALEM_A01_STAGE_V2\n");
   for(const auto& b:s.backgrounds)out<<"background "<<b.id<<' '<<b.image<<' '<<b.x<<' '<<b.y<<'\n';
   for(const auto& a:s.access)out<<"access "<<a.object<<' '<<a.scene<<' '<<a.index<<' '<<a.panorama<<' '<<a.enabled<<' '<<a.left<<' '<<a.top<<' '<<a.right<<' '<<a.bottom<<' '<<a.cursor<<' '<<a.event<<'\n';
   for(const auto& l:s.layers)out<<"layer "<<l.object<<' '<<l.presentation<<' '<<l.scene<<' '<<l.panorama<<' '<<l.animated<<' '<<(l.image.empty()?"-":l.image)<<' '<<l.channel<<' '<<l.frames<<' '<<l.mode<<' '<<l.order<<' '<<l.x<<' '<<l.y<<' '<<l.fps<<'\n';
@@ -37,8 +37,8 @@ std::string write_stage(const StageSetup& s) {
 StageSetup parse_stage(const std::string& text) {
   if(text.size()>128*1024 || text.find('\0')!=std::string::npos)throw ParseError("invalid stage text");
   std::istringstream in(text);in.imbue(std::locale::classic());std::string line,kind,extra;StageSetup s;
-  if(!std::getline(in,line) || (line!="JERUSALEM_A01_STAGE_V1" && line!="JERUSALEM_A01_STAGE_V2"))throw ParseError("unsupported stage version");
-  const bool extended=line=="JERUSALEM_A01_STAGE_V2";
+  if(!std::getline(in,line) || (line!="JERUSALEM_A01_STAGE_V1" && line!="JERUSALEM_A01_STAGE_V2" && line!="JERUSALEM_STORY_STAGE_V3"))throw ParseError("unsupported stage version");
+  const bool extended=line!="JERUSALEM_A01_STAGE_V1",combined=line=="JERUSALEM_STORY_STAGE_V3";
   unsigned count=0;
   while(std::getline(in,line)) {
     if(++count>512 || line.size()>512)throw ParseError("stage text limit");
@@ -52,7 +52,23 @@ StageSetup parse_stage(const std::string& text) {
     else throw ParseError("unknown stage record");
     if(row>>extra)throw ParseError("extra stage field");
   }
-  validate(s);return s;
+  validate(s);
+  if(combined!=stage_has_a02(s))throw ParseError("stage version does not match its A02 records");
+  return s;
+}
+namespace {
+bool a02_id(std::uint32_t id){return id>=20000 && id<30000;}
+}
+bool stage_has_a02(const StageSetup& s){return std::any_of(s.backgrounds.begin(),s.backgrounds.end(),[](const StageBackground& b){return a02_id(b.id);});}
+StageSetup a01_stage_subset(const StageSetup& s){
+  StageSetup r;
+  for(const auto& b:s.backgrounds)if(!a02_id(b.id))r.backgrounds.push_back(b);
+  for(const auto& a:s.access)if(!a02_id(a.object))r.access.push_back(a);
+  for(const auto& l:s.layers)if(!a02_id(l.object))r.layers.push_back(l);
+  for(const auto& d:s.dialogues)if(d.area=="A01")r.dialogues.push_back(d);
+  for(const auto& o:s.objects)if(!a02_id(o.id))r.objects.push_back(o);
+  for(const auto& a:s.ambient)if(!a02_id(a.node))r.ambient.push_back(a);
+  return r;
 }
 std::filesystem::path game_file(const std::filesystem::path& root,const std::vector<std::string>& components) {
   if(components.empty() || components.size()>8)throw ParseError("invalid game path");

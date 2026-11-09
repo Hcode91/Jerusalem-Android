@@ -56,7 +56,7 @@ def export(model, output, native):
         result = subprocess.check_output([str(native), 'story-tags', str(root/'a01-navigation.tsv'), str(root/'a01-stage.tsv'), str(root)], text=True)
     current, _ = map(int, result.split())
     state = bytearray((model/'camp.jrs').read_bytes())
-    if state[:8] != b'JRNSTORY' or struct.unpack_from('<I', state, 8)[0] != 2: raise ValueError('Native v2 save required')
+    if state[:8] != b'JRNSTORY' or struct.unpack_from('<I', state, 8)[0] != 3: raise ValueError('Native v3 save required')
     struct.pack_into('<Q', state, 20, current)
     struct.pack_into('<I', state, len(state)-4, zlib.crc32(state[:-4]))
     files['camp.jrs'] = state

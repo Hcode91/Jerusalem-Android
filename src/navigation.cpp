@@ -177,6 +177,90 @@ StageSetup extract_a01_stage(Bytes b) {
   return parse_stage(write_stage(result));
 }
 
+// A02 is registered by one setup routine (0047c5f0..0047ce94, SetSpaceSoft(2)).
+// Its object/puzzle part is a plain immediate-argument packet stream; the sound
+// part (0047cbab onward) mixes in runtime load arguments, so only pinned packets
+// are read from it. Registration bytes are interpreted as constants, never executed.
+StageSetup extract_a02_stage(Bytes b) {
+  (void)extract_a01_navigation(b);  // same version gate
+  constexpr std::uint32_t first=0x47c5f0,sounds=0x47cbab,last=0x47ce95;
+  const Pe pe(b);StageSetup result;
+  for(const auto& call:parse_setup_calls(pe.at(first,sounds-first),first)) {
+    const auto& a=call.arguments;
+    if(call.target==0x428120) {if(a!=std::vector<std::uint32_t>{2})throw ParseError("unexpected A02 space");}
+    else if(call.target==0x429700) {
+      if(a.size()!=4 || a[3]!=1)throw ParseError("unsupported A02 object");
+      result.objects.push_back({a[0],pe.label(a[1]),pe.name(a[2],true)});
+    }else if(call.target==0x42af00) {
+      if(a.size()!=5 || a[4]!=1)throw ParseError("unsupported A02 background");
+      result.backgrounds.push_back({a[0],pe.name(a[1],true),signed_word(a[2]),signed_word(a[3])});
+    }else if(call.target==0x429ac0) {
+      if(a.size()!=9 || a[6]>1)throw ParseError("unsupported A02 access");
+      const auto index=std::count_if(result.access.begin(),result.access.end(),[&](const StageAccess& h){return h.object==a[0];});
+      // The registered rectangle for object 20001 ends at y=3926; the 640x480 puzzle
+      // screen clips it at 480, which is the only reachable part.
+      result.access.push_back({a[0],a[1],static_cast<std::uint32_t>(index),false,a[6]!=0,signed_word(a[2]),signed_word(a[3]),signed_word(a[4]),std::min(signed_word(a[5]),480),a[7],a[8]});
+    }else if(call.target==0x42a080 || call.target==0x42a170) {
+      const bool animated=call.target==0x42a170;
+      if(a.size()!=(animated?12U:9U) || (animated && a[4]!=0))throw ParseError("unsupported A02 puzzle layer");
+      result.layers.push_back({a[0],a[1],a[2],false,animated,pe.name(a[3],true),animated?a[4]:0,animated?a[9]:1,animated?a[11]:0,a[8],signed_word(a[animated?5:4]),signed_word(a[animated?6:5]),animated?real(a[10]):0});
+    }else if(call.target!=0x42ad80 && call.target!=0x42a000 && call.target!=0x42a5c0)
+      throw ParseError("unexpected A02 setup call");
+    // 0042ad80 AddPuz, 0042a000 ObjAddPre and 0042a5c0 (animation-finished event IDs) carry no stage data used here.
+  }
+  // SouAdd (0042c8d0): push name; push category; push id; mov ecx,esi; call.
+  std::map<std::uint32_t,std::string> ambient_names;std::map<std::uint32_t,std::uint32_t> masters;
+  for(std::uint32_t address=sounds;address+19<=last;++address) {
+    const auto p=pe.at(address,19);
+    if(!(p.u8(0)==0x68 && p.u8(5)==0x6a && p.u8(7)==0x68 && p.is(12,std::string("\x8b\xce\xe8",3)) && std::int64_t(address)+19+p.i32(15)==0x42c8d0))continue;
+    auto stem=pe.name(p.u32(1),true);
+    if(stem.size()<5 || stem.substr(stem.size()-4)!=".WAV")throw ParseError("unsupported A02 sound suffix");
+    stem.resize(stem.size()-4);
+    if(p.u8(6)==5)result.dialogues.push_back({p.u32(8),"A02",std::move(stem)});
+    else if(p.u8(6)==2)ambient_names.emplace(p.u32(8),std::move(stem));
+    else throw ParseError("unsupported A02 sound category");
+  }
+  // SouSetVol (0042cd50) and PuzAddAmbSou (0042b4a0) packets are all immediates.
+  for(std::uint32_t address=sounds;address+5<=last;++address) {
+    const auto p=pe.at(address,5);
+    if(p.u8(0)!=0xe8)continue;
+    const auto target=std::uint32_t(std::int64_t(address)+5+p.i32(1));
+    if(target!=0x42cd50 && target!=0x42b4a0)continue;
+    const unsigned count=target==0x42cd50?2:7;
+    std::optional<SetupCall> packet;
+    for(unsigned distance=5;distance<=40 && !packet;++distance) {
+      try{
+        const auto bytes=pe.at(address-distance,distance+5);std::vector<std::uint8_t> code{0x56,0x8b,0xf1};code.insert(code.end(),bytes.data(),bytes.data()+bytes.size());
+        const auto calls=parse_setup_calls(Bytes(code),address-distance-3);
+        if(calls.size()==1 && calls[0].target==target && calls[0].arguments.size()==count)packet=calls[0];
+      }catch(const ParseError&){}
+    }
+    if(!packet)throw ParseError("unsupported A02 sound packet");
+    const auto& a=packet->arguments;
+    if(target==0x42cd50)masters[a[0]]=a[1];
+    else {
+      if(!ambient_names.count(a[1]) || a[3]!=0 || a[4]!=1 || a[5]!=1 || a[6]!=10)throw ParseError("unsupported A02 puzzle ambience");
+      // A sound without SouSetVol keeps the master value 100 set when it is created (00484042).
+      result.ambient.push_back({a[0],a[1],a[2],ambient_names.at(a[1]),masters.count(a[1])?masters.at(a[1]):100U});
+    }
+  }
+  if(result.backgrounds.size()!=7 || result.objects.size()!=6 || result.access.size()!=1 || result.layers.size()!=14 || result.dialogues.size()!=12 || result.ambient.size()!=12)
+    throw ParseError("incomplete supported A02 setup");
+  return result;
+}
+
+StageSetup extract_story_stage(Bytes b) {
+  auto setup=extract_a01_stage(b);
+  const auto a02=extract_a02_stage(b);
+  setup.backgrounds.insert(setup.backgrounds.end(),a02.backgrounds.begin(),a02.backgrounds.end());
+  setup.access.insert(setup.access.end(),a02.access.begin(),a02.access.end());
+  setup.layers.insert(setup.layers.end(),a02.layers.begin(),a02.layers.end());
+  setup.dialogues.insert(setup.dialogues.end(),a02.dialogues.begin(),a02.dialogues.end());
+  setup.objects.insert(setup.objects.end(),a02.objects.begin(),a02.objects.end());
+  setup.ambient.insert(setup.ambient.end(),a02.ambient.begin(),a02.ambient.end());
+  return parse_stage(write_stage(setup));
+}
+
 SceneGraph extract_a01_navigation(Bytes b) {
   if (b.size()!=811008) throw ParseError("unsupported Jerusalem executable size/version");
   std::uint64_t fingerprint=14695981039346656037ULL;

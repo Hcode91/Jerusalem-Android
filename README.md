@@ -21,6 +21,8 @@ An independent C++17 engine reimplementation with an SDL2 desktop panorama viewe
 
 The latest implementation combines the [original main menu](docs/original-menu-milestone-15.md) with [complete A01 progression, save migration and phone tests](docs/a01-complete-milestone-16.md). It adds camp topics, bowl/jug use, seven-card matching, wrong responses, original puzzle ambience, supported speech animation and the final A02 handoff. Existing version-1 camp saves migrate into the playable camp. Full-area models require one refresh through Game data → Set up game. **APK/emulator/ARM64 phone validation of these changes is pending.** Four optional DAN tracks and several presentation details remain fidelity work; A02 gameplay is not implemented. No original assets are bundled.
 
+**A02 now follows A01** when its files are imported: the opening conversation, the Walls/Continue/Guards topics and all four A02 movies run up to the original hand-off to A03. Run Game data → Set up game once to refresh the model; see [A02 milestone](docs/a02-milestone-17.md). Android validation of A02 is pending.
+
 The progressive C++ Cinema decoder still matches all 367 frames of three complete original movies byte-for-byte. SDL2 has a desktop movie player, and host tools export PNG frames and stereo WAV tracks. See [Cinema format evidence](docs/a01-story-cinema-milestone-12.md).
 
 Both complete European disc images are now available privately. The [Disc 2 survey](docs/disc2-corpus-survey.md) adds 119 successfully decoded full-node images and seven validated AT3 directories; new-area gameplay remains unimplemented. Progressive Cinema decoding is now implemented for the verified subset; interlaced variants remain unsupported.
