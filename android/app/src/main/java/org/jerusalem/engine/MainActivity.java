@@ -548,7 +548,7 @@ public class MainActivity extends SDLActivity {
 
     private void chooseNavigationSource() {
         new AlertDialog.Builder(this).setTitle("Set up game")
-                .setMessage("Choose Jerusalem.ex_ or Jerusalem.exe from your original disc. The app reads its A01 scene connections and ambient sound bindings without running or retaining the Windows program.")
+                .setMessage("Choose Jerusalem.ex_ or Jerusalem.exe from your original disc. The app reads the scene connections and story layouts, and keeps a private copy of the program: from A03 on, the original area scripts are interpreted from it in a sandbox (no Windows code is run natively).")
                 .setPositiveButton("Choose file", (dialog, which) -> {
                     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                     intent.setType("*/*"); intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -587,6 +587,10 @@ public class MainActivity extends SDLActivity {
                 temporary = File.createTempFile("stage-", ".part", dataRoot);
                 try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(stage); output.getFD().sync(); }
                 if (!temporary.renameTo(new File(dataRoot, "a01-stage.tsv"))) throw new IOException("Cannot save story layouts");
+                // A03 onward interprets the original area scripts from this private copy.
+                temporary = File.createTempFile("program-", ".part", dataRoot);
+                try (FileOutputStream output = new FileOutputStream(temporary)) { output.write(program); output.getFD().sync(); }
+                if (!temporary.renameTo(new File(dataRoot, "original-program.ex_"))) throw new IOException("Cannot save the program copy");
                 success = true; message = "Original A01 connections and story layouts are ready.";
             } catch (Exception error) { message = "A01 extraction failed: " + error.getMessage(); }
             finally { if (temporary != null && temporary.exists() && !temporary.delete())

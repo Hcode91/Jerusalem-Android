@@ -47,7 +47,43 @@ std::size_t stage_frame(std::uint64_t elapsed,const StageLayer& layer);
 // Media completion must be acknowledged using its serial; cancelled/stale completions do nothing.
 struct StoryCue {enum Kind {Node,Puzzle,Movie,Speech,Boundary} kind;std::uint32_t id=0;std::string asset;Camera camera{};std::uint64_t serial=0;};
 struct StoryResume {Camera camera{};std::uint64_t media_ms=0,visual_ms=0;std::optional<std::uint32_t> selected;};
-class A01Story {
+// What the Android front end drives: A01Story (A01/A02) and ScriptStory (A03 onward).
+class Story {
+ public:
+  virtual ~Story()=default;
+  virtual std::vector<std::uint8_t> save(const StoryResume& resume,std::uint64_t assets) const=0;
+  virtual const std::optional<StoryCue>& playing() const=0;
+  virtual std::optional<StoryCue> next()=0;
+  virtual bool complete(std::uint64_t serial)=0;
+  virtual void tick(std::uint64_t elapsed_ms)=0;
+  virtual bool enter_node(std::uint32_t id,Camera camera={})=0;
+  virtual bool enter_puzzle(std::uint32_t id)=0;
+  virtual bool activate(std::uint32_t object,std::uint32_t event,std::optional<std::uint32_t> item={})=0;
+  virtual bool pickup(std::uint32_t object)=0;
+  virtual std::optional<std::uint32_t> combine(std::uint32_t first,std::uint32_t second)=0;
+  virtual std::vector<std::uint32_t> topics() const=0;
+  virtual bool choose_topic(std::uint32_t id)=0;
+  virtual std::string item_name(std::uint32_t id) const=0;
+  virtual void speech_animation(const Dan& animation,std::uint64_t elapsed_ms)=0;
+  virtual void clear_speech_animation(const Dan& animation)=0;
+  virtual std::optional<StageAccess> hit(int x,int y) const=0;
+  virtual std::vector<StageAccess> hotspots() const=0;
+  virtual std::vector<StageLayer> layers() const=0;
+  virtual std::vector<bool> visibility(std::uint32_t node) const=0;
+  virtual std::optional<std::uint32_t> local_item() const=0;
+  virtual const SceneGraph& graph() const=0;
+  virtual const StageSetup& setup() const=0;
+  virtual std::vector<std::uint32_t> inventory() const=0;
+  virtual bool busy() const=0;
+  virtual bool puzzle() const=0;
+  virtual bool failed() const=0;
+  virtual bool boundary() const=0;
+  virtual bool finished() const=0;
+  virtual std::uint32_t scene() const=0;
+  virtual unsigned area() const=0;
+  virtual std::uint64_t remaining_ms() const=0;
+};
+class A01Story : public Story {
   StageSetup setup_;SceneGraph graph_;InteractionState& items_;
   std::set<std::pair<std::uint32_t,std::uint32_t>> shown_;
   std::vector<bool> enabled_;
@@ -76,37 +112,38 @@ class A01Story {
  public:
   A01Story(StageSetup setup,SceneGraph graph,InteractionState& inventory,std::uint32_t seed=1);
   void start();
-  std::vector<std::uint8_t> save(const StoryResume& resume,std::uint64_t assets) const;
+  std::vector<std::uint8_t> save(const StoryResume& resume,std::uint64_t assets) const override;
   // Validates before replacing state; requeues active media without completing it.
   StoryResume load(Bytes bytes,std::uint64_t assets,std::optional<std::uint64_t> legacy_assets={});
-  const std::optional<StoryCue>& playing() const {return playing_;}
-  std::optional<StoryCue> next();
-  bool complete(std::uint64_t serial);
-  void tick(std::uint64_t elapsed_ms);
-  bool enter_node(std::uint32_t id,Camera camera={});
-  bool enter_puzzle(std::uint32_t id);
-  bool activate(std::uint32_t object,std::uint32_t event,std::optional<std::uint32_t> item={});
-  bool pickup(std::uint32_t object);
-  std::optional<std::uint32_t> combine(std::uint32_t first,std::uint32_t second);
-  std::vector<std::uint32_t> topics() const;
-  bool choose_topic(std::uint32_t id);
-  std::string item_name(std::uint32_t id) const;
-  void speech_animation(const Dan& animation,std::uint64_t elapsed_ms);
-  void clear_speech_animation(const Dan& animation);
-  std::optional<StageAccess> hit(int x,int y) const;
-  std::vector<StageAccess> hotspots() const;
-  std::vector<StageLayer> layers() const;
-  std::vector<bool> visibility(std::uint32_t node) const;
-  std::optional<std::uint32_t> local_item() const;
-  const SceneGraph& graph() const {return graph_;}
-  const StageSetup& setup() const {return setup_;}
-  bool busy() const {return playing_.has_value() || !pending_.empty();}
-  bool puzzle() const {return puzzle_;}
-  bool failed() const {return failed_;}
-  bool boundary() const {return boundary_;}
-  bool finished() const {return finished_;}
-  std::uint32_t scene() const {return scene_;}
-  unsigned area() const {return area_;}
-  std::uint64_t remaining_ms() const {return deadline_>clock_?deadline_-clock_:0;}
+  const std::optional<StoryCue>& playing() const override {return playing_;}
+  std::optional<StoryCue> next() override;
+  bool complete(std::uint64_t serial) override;
+  void tick(std::uint64_t elapsed_ms) override;
+  bool enter_node(std::uint32_t id,Camera camera={}) override;
+  bool enter_puzzle(std::uint32_t id) override;
+  bool activate(std::uint32_t object,std::uint32_t event,std::optional<std::uint32_t> item={}) override;
+  bool pickup(std::uint32_t object) override;
+  std::optional<std::uint32_t> combine(std::uint32_t first,std::uint32_t second) override;
+  std::vector<std::uint32_t> topics() const override;
+  bool choose_topic(std::uint32_t id) override;
+  std::string item_name(std::uint32_t id) const override;
+  void speech_animation(const Dan& animation,std::uint64_t elapsed_ms) override;
+  void clear_speech_animation(const Dan& animation) override;
+  std::optional<StageAccess> hit(int x,int y) const override;
+  std::vector<StageAccess> hotspots() const override;
+  std::vector<StageLayer> layers() const override;
+  std::vector<bool> visibility(std::uint32_t node) const override;
+  std::optional<std::uint32_t> local_item() const override;
+  const SceneGraph& graph() const override {return graph_;}
+  const StageSetup& setup() const override {return setup_;}
+  bool busy() const override {return playing_.has_value() || !pending_.empty();}
+  bool puzzle() const override {return puzzle_;}
+  bool failed() const override {return failed_;}
+  bool boundary() const override {return boundary_;}
+  bool finished() const override {return finished_;}
+  std::uint32_t scene() const override {return scene_;}
+  unsigned area() const override {return area_;}
+  std::uint64_t remaining_ms() const override {return deadline_>clock_?deadline_-clock_:0;}
+  std::vector<std::uint32_t> inventory() const override {return items_.inventory();}
 };
 }
