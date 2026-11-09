@@ -371,9 +371,9 @@ class Renderer {
     }
     width_=static_cast<int>(b.width); height_=static_cast<int>(b.height); fit();
   }
-  void panorama_frame(const jerusalem::Bitmap& image) {
+  void panorama_frame(jerusalem::Bitmap&& image) {
     if(!camera_mode_ || image.width!=panorama_.width || image.height!=panorama_.height)throw jerusalem::ParseError("story panorama geometry changed");
-    panorama_=image;camera_dirty_=true;
+    panorama_=std::move(image);camera_dirty_=true;
   }
   std::optional<jerusalem::HotspotPoint> puzzle_hit(float x,float y) const {
     const int bottom=static_cast<int>(viewport_bottom.load());
@@ -416,7 +416,7 @@ class Renderer {
         }
         if (camera_dirty_) {
           camera_=jerusalem::constrain_camera(geometry_,camera_,rw,rh);
-          const auto frame=jerusalem::render_panorama(panorama_,geometry_,camera_,rw,rh);
+          const auto frame=jerusalem::render_panorama_fast(panorama_,geometry_,camera_,rw,rh);
           if (!SDL_UpdateTexture(camera_texture_,nullptr,frame.rgba.data(),rw*4))
             throw jerusalem::ParseError(std::string("Panorama upload: ")+SDL_GetError());
           camera_dirty_=false;
@@ -537,8 +537,21 @@ class InspectionScene {
       story_layers_.push_back(std::move(frames));
     }
   }
-  void render_story_picture(bool first=false) {
+  // Signature of everything that changes the composed story picture over time. The
+  // per-frame update recomposes only when an animation actually advances.
+  std::vector<std::size_t> story_picture_signature() const {
+    std::vector<std::size_t> sig{story_->scene(),story_->puzzle()?1U:0U};
+    if(story_->puzzle()){for(const auto& l:story_layers_)sig.push_back(jerusalem::stage_frame(story_elapsed_,l.layer));}
+    else{for(const auto v:story_->visibility(story_->scene()))sig.push_back(v?1U:0U);
+      for(const auto& l:story_->layers())if(l.panorama && l.animated)sig.push_back(jerusalem::stage_frame(story_elapsed_,l));}
+    return sig;
+  }
+  std::vector<std::size_t> story_signature_;
+  void render_story_picture(bool first=false,bool only_if_changed=false) {
     if(!story_ || story_base_.rgba.empty())return;
+    auto signature=story_picture_signature();
+    if(only_if_changed && signature==story_signature_)return;
+    story_signature_=std::move(signature);
     auto image=story_base_;
     if(story_->puzzle()) {
       for(const auto& l:story_layers_){const auto& frame=l.frames.at(jerusalem::stage_frame(story_elapsed_,l.layer));if(l.layer.channel)jerusalem::stage_blit_tga(image,frame,l.layer.x,l.layer.y);else jerusalem::stage_blit(image,frame,l.layer.x,l.layer.y);}
@@ -549,7 +562,7 @@ class InspectionScene {
       for(std::size_t c=0;c<visible.size();++c)if(visible[c] && channels.at(c).frames.size()==1){const auto& rect=channels[c].frames.front();jerusalem::apply_aqc_patch(image,story_animation_->frame(c,0),rect.left,rect.top);}
       for(const auto& l:story_->layers())if(l.panorama && l.animated){const auto frame=jerusalem::stage_frame(story_elapsed_,l);const auto& rect=channels.at(l.channel).frames.at(frame);jerusalem::apply_aqc_patch(image,story_animation_->frame(l.channel,frame),rect.left,rect.top);}
       if(first){const auto bytes=jerusalem::read_file(assets_.at(story_->scene()));renderer_.panorama(std::move(image),jerusalem::panorama_geometry(jerusalem::Bytes(bytes)));}
-      else renderer_.panorama_frame(image);
+      else renderer_.panorama_frame(std::move(image));
       std::vector<jerusalem::Exit> exits,markers;
       if(!story_->busy())for(const auto& e:story_->graph().exits)if(e.source==story_->scene())exits.push_back(e);
       for(const auto& a:story_->hotspots())markers.push_back({a.scene,a.index,a.object,false,true,a.left,a.top,a.right,a.bottom,a.cursor,a.event,{}});
@@ -808,7 +821,7 @@ class InspectionScene {
       if(now-last_autosave_>=15000)save_story(true);
       const auto seconds=(story_->remaining_ms()+999)/1000;
       if(seconds && seconds!=story_seconds_ && !story_->busy()){story_seconds_=seconds;report("A01 story: "+std::to_string(seconds)+" seconds remain for this attempt.");}
-      if(!movie_ && !story_base_.rgba.empty() && story_elapsed_-story_visual_>=80){story_visual_=story_elapsed_;render_story_picture();}
+      if(!movie_ && !story_base_.rgba.empty())render_story_picture(false,true);
     }catch(const std::exception& e){story_error(e);}
   }
   void story_tap(float x,float y) {
@@ -895,7 +908,11 @@ class InspectionScene {
     if(story_ && files.animation){
       try{
         const auto bytes=jerusalem::read_file(*files.animation);auto animation=jerusalem::parse_dan(std::string(bytes.begin(),bytes.end()));
-        for(const auto& level:animation.levels)if(std::none_of(story_->setup().layers.begin(),story_->setup().layers.end(),[&](const jerusalem::StageLayer& l){return l.object==level.second && l.presentation==level.third;}))throw jerusalem::ParseError("DAN references an unknown presentation");
+        // A level may name a presentation that is registered (ObjAddPre) but has no image in any
+        // puzzle, e.g. 20002/0 in ADRI_DIA055/057. The original then draws nothing; so do we.
+        const auto& setup=story_->setup();
+        for(const auto& level:animation.levels)if(std::none_of(setup.layers.begin(),setup.layers.end(),[&](const jerusalem::StageLayer& l){return l.object==level.second && l.presentation==level.third;})
+          && std::none_of(setup.objects.begin(),setup.objects.end(),[&](const jerusalem::StageObject& o){return o.id==level.second;}))throw jerusalem::ParseError("DAN references an unknown presentation");
         dialogue_animation_=std::move(animation);
       }catch(const jerusalem::ParseError& e){__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Speech animation unavailable: %s: %s",files.animation->filename().string().c_str(),e.what());}
     }
@@ -1165,6 +1182,7 @@ int main(int,char**) {
     std::set<SDL_FingerID> touches;
     SDL_FingerID active_touch=0;
     while (running) {
+      const auto frame_start=SDL_GetTicks();
       SDL_Event event;
       while (SDL_PollEvent(&event)) {
         if (event.type==SDL_EVENT_QUIT) running=false;
@@ -1228,7 +1246,9 @@ int main(int,char**) {
         try { renderer.draw(message); }
         catch (const std::exception& e) { renderer.clear_image(); report(std::string("Render error: ")+e.what()); }
       }
-      SDL_Delay(lifecycle.background()?100:16);
+      // Pace to ~60 Hz without adding a fixed sleep on top of the frame's own work.
+      const auto spent=SDL_GetTicks()-frame_start;const std::uint64_t budget=lifecycle.background()?100:16;
+      if(spent<budget)SDL_Delay(static_cast<std::uint32_t>(budget-spent));
     }
   }
   return 0;

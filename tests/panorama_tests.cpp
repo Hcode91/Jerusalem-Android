@@ -58,6 +58,25 @@ int main() {
     rejects([&]{render_panorama(source,g,{},640,480);});
     rejects([&]{render_panorama(source,small,{},4096,4097);});
     source.rgba.pop_back(); rejects([&]{render_panorama(source,small,{},8,4);});
+    {
+      // The interactive grid renderer must stay within one source texel of the exact
+      // mapping, including views across the 0/360 seam and at the pitch limits.
+      const PanoramaGeometry big{2048,856,0,360,-75,75};
+      Bitmap coded{2048,856,std::vector<std::uint8_t>(std::size_t(2048)*856*4)};
+      for(unsigned y=0;y<856;++y)for(unsigned x=0;x<2048;++x){auto* p=&coded.rgba[(std::size_t(y)*2048+x)*4];p[0]=std::uint8_t(x&255);p[1]=std::uint8_t(x>>8);p[2]=std::uint8_t(y&255);p[3]=std::uint8_t(y>>8);}
+      std::size_t samples=0,exact=0;
+      for(const Camera cam:{Camera{0,0,85},Camera{359.5,10,60},Camera{180,-30,85},Camera{90,30,40},Camera{225,0,87}})
+        for(const auto size:{std::pair<unsigned,unsigned>{640,300},{301,479}}){
+          const auto a=render_panorama(coded,big,cam,size.first,size.second),b=render_panorama_fast(coded,big,cam,size.first,size.second);
+          for(std::size_t i=0;i<a.rgba.size();i+=4){
+            const int ax=a.rgba[i]|a.rgba[i+1]<<8,bx=b.rgba[i]|b.rgba[i+1]<<8,ay=a.rgba[i+2]|a.rgba[i+3]<<8,by=b.rgba[i+2]|b.rgba[i+3]<<8;
+            const int dx=std::min(std::abs(ax-bx),2048-std::abs(ax-bx));
+            check(dx<=1 && std::abs(ay-by)<=1);++samples;exact+=dx==0 && ay==by;
+          }
+        }
+      check(exact*100>=samples*95);
+      rejects([&]{render_panorama_fast(coded,big,{},640,300,0);});
+    }
     std::cout << checks << " panorama checks passed\n";
     return 0;
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
