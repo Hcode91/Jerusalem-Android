@@ -9,6 +9,7 @@
 #include "jerusalem/cinema.hpp"
 #include "jerusalem/stage.hpp"
 #include "jerusalem/menu.hpp"
+#include "jerusalem/script_story.hpp"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <jni.h>
@@ -487,7 +488,10 @@ class InspectionScene {
   std::mutex movie_clock_mutex_;
   std::uint64_t movie_time() {std::lock_guard<std::mutex> guard(movie_clock_mutex_);return movie_offset_+(movie_paused_?movie_pause_at_:SDL_GetTicks())-movie_start_-movie_paused_total_;}
   void movie_clock_start(std::uint64_t offset=0){std::lock_guard<std::mutex> guard(movie_clock_mutex_);movie_start_=SDL_GetTicks();movie_offset_=offset;movie_paused_total_=0;if(movie_paused_)movie_pause_at_=movie_start_;}
-  std::unique_ptr<jerusalem::A01Story> story_;
+  std::unique_ptr<jerusalem::Story> story_;
+  // A03 onward: original area scripts run by ScriptStory; their area resources follow the area.
+  jerusalem::ScriptStory* script_=nullptr;
+  unsigned script_area_=0;
   std::unique_ptr<jerusalem::StageArt> story_art_,a02_art_,system_art_;
   std::unique_ptr<jerusalem::AqcAnimation> story_animation_;
   std::map<std::string,jerusalem::Bitmap> art_cache_;
@@ -503,7 +507,7 @@ class InspectionScene {
     const char* storage=SDL_GetAndroidInternalStoragePath();if(!storage)throw jerusalem::ParseError("Android game-data storage unavailable");
     return std::filesystem::path(storage)/"game-data";
   }
-  void abandon_story() {story_readiness_logged_=false;art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();story_art_.reset();a02_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
+  void abandon_story() {story_readiness_logged_=false;art_cache_.clear();art_cache_bytes_=0;topic_requested.store(false);renderer_.game_mode(false);story_.reset();script_=nullptr;script_area_=0;story_art_.reset();a02_art_.reset();system_art_.reset();story_animation_.reset();story_layers_.clear();story_base_={};story_media_=0;}
   void story_error(const std::exception& error) {story_halted_=true;audio_.stop();clear_dialogue();movie_.reset();story_media_=0;report(std::string("A01 story stopped: ")+error.what()+". Tap Start A01 story to restart.");}
   jerusalem::Bitmap art_image(const std::string& name) {
     if(const auto found=art_cache_.find(name);found!=art_cache_.end())return found->second;
@@ -524,7 +528,8 @@ class InspectionScene {
       const auto& backgrounds=story_->setup().backgrounds;
       const auto b=std::find_if(backgrounds.begin(),backgrounds.end(),[&](const jerusalem::StageBackground& v){return v.id==story_->scene();});
       if(b==backgrounds.end())throw jerusalem::ParseError("missing puzzle background binding");
-      jerusalem::stage_blit(story_base_,art_image(b->image),b->x,b->y);
+      try{jerusalem::stage_blit(story_base_,art_image(b->image),b->x,b->y);}
+      catch(const jerusalem::ParseError& e){if(!script_)throw;__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Puzzle background unavailable: %s",e.what());}
     }else {
       const auto data=jerusalem::read_file(assets_.at(story_->scene()));story_base_=jerusalem::decode_aqc(jerusalem::Bytes(data));
       story_animation_=std::make_unique<jerusalem::AqcAnimation>(data);
@@ -532,8 +537,14 @@ class InspectionScene {
     std::size_t memory=0;
     for(const auto& l:story_->layers())if(!l.panorama) {
       LayerFrames frames{l,{}};
+      try{
       for(unsigned i=0;i<l.frames;++i){std::ostringstream name;name<<l.image;if(l.animated)name<<'.'<<std::setw(4)<<std::setfill('0')<<(i+1)<<(l.channel?".TGA":".BMP");
         auto image=art_image(name.str());memory+=image.rgba.size();if(memory>32*1024*1024)throw jerusalem::ParseError("puzzle layer memory limit");frames.frames.push_back(std::move(image));}
+      }catch(const jerusalem::ParseError& e){
+        // A few original layers name images that are not in the area archive; the scripts still run.
+        if(!script_ || std::string(e.what()).find("missing AT3 image:")!=0)throw;
+        __android_log_print(ANDROID_LOG_WARN,"Jerusalem","Puzzle layer skipped: %s",e.what());continue;
+      }
       story_layers_.push_back(std::move(frames));
     }
   }
@@ -595,22 +606,27 @@ class InspectionScene {
     while(const auto cue=story_->next()) {
       story_readiness_logged_=false;
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 story cue: kind=%u id=%u serial=%llu",unsigned(cue->kind),cue->id,static_cast<unsigned long long>(cue->serial));
+      if(script_ && script_->area()!=script_area_)load_script_area();
       if(cue->kind==jerusalem::StoryCue::Node || cue->kind==jerusalem::StoryCue::Puzzle){
         audio_.stop();clear_dialogue();movie_.reset();node_=cue->kind==jerusalem::StoryCue::Node?std::optional<std::uint32_t>(cue->id):std::nullopt;
         renderer_.clear_image();prepare_story_picture();render_story_picture(true);renderer_.set_camera(cue->camera);publish_inventory();
-        if(cue->kind==jerusalem::StoryCue::Node){std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:navigation_->ambient)if(b.node==cue->id)bindings.push_back(b);ambience_.set(assets_.at(cue->id),bindings);}else{std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:story_->setup().ambient)if(b.node==cue->id)bindings.push_back(b);
+        if(cue->kind==jerusalem::StoryCue::Node){std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:navigation_->ambient)if(b.node==cue->id)bindings.push_back(b);if(script_)set_script_ambience(bindings);else ambience_.set(assets_.at(cue->id),bindings);}else{std::vector<jerusalem::SceneAmbient> bindings;for(const auto& b:story_->setup().ambient)if(b.node==cue->id)bindings.push_back(b);
           // resolve_ambient_asset searches the folder above a NODE path, i.e. the area folder.
-          ambience_.set(story_->area()==2?area_directory("A02")/"NODE"/"A02.AQC":assets_.begin()->second,bindings);}
+          if(script_)set_script_ambience(bindings);
+          else ambience_.set(story_->area()==2?area_directory("A02")/"NODE"/"A02.AQC":assets_.begin()->second,bindings);}
         report("A01 story: "+std::string(story_->puzzle()?"puzzle ":"node ")+std::to_string(cue->id)+". Tap original hotspots; Inventory selects items.");
       }else if(cue->kind==jerusalem::StoryCue::Movie){
         ambience_.stop();clear_dialogue();audio_.stop();const auto offset=resume_media_;resume_media_=0;
         start_story_movie(*cue,offset);story_media_=cue->serial;break;
       }else if(cue->kind==jerusalem::StoryCue::Speech){story_media_=cue->serial;const auto offset=resume_media_;resume_media_=0;play_dialogue(cue->id,offset);break;}
-      else {report(cue->asset);publish_inventory();}
+      else {
+        if(!script_ && story_->area()==2 && story_->finished() && script_program_available()){begin_script(nullptr,false);return;}
+        report(cue->asset);publish_inventory();
+      }
     }
     if(!story_->busy() && !story_->boundary() && !story_readiness_logged_) {
       std::string inventory;
-      for(const auto item:interactions_->inventory()){if(!inventory.empty())inventory+=",";inventory+=std::to_string(item);}
+      for(const auto item:story_->inventory()){if(!inventory.empty())inventory+=",";inventory+=std::to_string(item);}
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","A01 story ready: scene=%u puzzle=%u inventory=[%s]",story_->scene(),unsigned(story_->puzzle()),inventory.c_str());
       story_readiness_logged_=true;
     }
@@ -650,7 +666,13 @@ class InspectionScene {
   void publish_inventory(const jerusalem::InteractionState* state=nullptr) {
     if (!state) state=interactions_.get();
     std::ostringstream out,options;
-    if (!navigation_ || !state) out << "Start A01 navigation to view the pickup inventory.";
+    if (script_) {
+      const auto bag=story_->inventory();
+      out << "Collected items: " << bag.size() << '\n';
+      for (const auto id:bag) { const auto name=story_->item_name(id); out << "- " << name << " [" << id << "]\n"; options << id << '\t' << name << '\n'; }
+      out << "\nUse item selects an item for a hotspot; Combine items tries two items together.\nUse Menu → Save game to save story progress.";
+    }
+    else if (!navigation_ || !state) out << "Start A01 navigation to view the pickup inventory.";
     else if(navigation_->items.empty()) out << "Pickup support needs refreshed connections: long-press A01 navigation and select the original executable again.";
     else {
       out << "Collected items: " << state->inventory().size() << '\n';
@@ -757,9 +779,69 @@ class InspectionScene {
     }
   }
   bool in_story() const {return bool(story_);}
+  // ---- A03 onward: ScriptStory over the user's own program copy (saved at Set up game).
+  bool script_program_available() {try{return std::filesystem::is_regular_file(data_root()/"original-program.ex_");}catch(const std::exception&){return false;}}
+  static std::uint64_t program_tag(const std::vector<std::uint8_t>& bytes){std::uint64_t h=14695981039346656037ULL;for(const auto b:bytes)h=(h^b)*1099511628211ULL;return h;}
+  std::string area_code(unsigned area) const {return area<10?"A0"+std::to_string(area):"A"+std::to_string(area);}
+  void load_script_area() {
+    const auto area=script_->area();const auto code=area_code(area);
+    const auto& graph=script_->model(area).graph;
+    std::map<std::uint32_t,std::filesystem::path> found;
+    if(!graph.nodes.empty()){
+      const auto lower=[](std::string v){for(auto& c:v)if(c>='A'&&c<='Z')c=char(c-'A'+'a');return v;};
+      std::map<std::string,std::uint32_t> wanted;for(const auto& n:graph.nodes)wanted.emplace(lower(n.asset+".aqc"),n.id);
+      std::size_t visited=0;
+      for(auto it=std::filesystem::recursive_directory_iterator(area_directory(code));it!=std::filesystem::recursive_directory_iterator();++it){
+        if(++visited>20000 || it.depth()>8)throw jerusalem::ParseError("scene asset scan limit exceeded");
+        if(it->is_symlink() || !it->is_regular_file())continue;
+        const auto match=wanted.find(lower(it->path().filename().string()));if(match!=wanted.end())found[match->second]=it->path();
+      }
+      for(const auto& n:graph.nodes)if(!found.count(n.id))throw jerusalem::ParseError("missing scene asset "+n.asset+".AQC; import the "+code+" folder");
+    }
+    story_art_=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{code+".AT3"})));a02_art_.reset();
+    art_cache_.clear();art_cache_bytes_=0;
+    navigation_=graph;assets_=std::move(found);script_area_=area;
+    __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Script area %s ready: nodes=%zu puzzles=%zu",code.c_str(),graph.nodes.size(),script_->model(area).puzzles.size());
+  }
+  void set_script_ambience(const std::vector<jerusalem::SceneAmbient>& bindings) {
+    const auto node=area_directory(area_code(script_->area()))/"NODE"/"AREA.AQC";
+    std::vector<jerusalem::SceneAmbient> usable;
+    for(const auto& b:bindings){try{(void)jerusalem::resolve_ambient_asset(node,b.stem);usable.push_back(b);}
+      catch(const std::exception& e){__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Ambient sound skipped: %s",e.what());}}
+    try{ambience_.set(node,usable);}catch(const std::exception& e){ambience_.stop();__android_log_print(ANDROID_LOG_WARN,"Jerusalem","Ambience unavailable: %s",e.what());}
+  }
+  void begin_script(const std::vector<std::uint8_t>* save,bool loading) {
+    try{
+      const auto program=jerusalem::read_file(data_root()/"original-program.ex_");
+      const auto ini=jerusalem::read_file(jerusalem::game_file(data_root(),{"KEYWORDS.INI"}));const std::string text(ini.begin(),ini.end());
+      auto next=std::make_unique<jerusalem::ScriptStory>(program,jerusalem::parse_topic_book(text),static_cast<std::uint32_t>(SDL_GetTicks()));
+      const auto tag=program_tag(program);jerusalem::StoryResume resume;
+      if(save)resume=next->load(jerusalem::Bytes(*save),tag);else next->start(3,0);
+      auto keywords=jerusalem::parse_keywords(text);
+      auto system=std::make_unique<jerusalem::StageArt>(jerusalem::read_file(jerusalem::game_file(data_root(),{"SY.AT3"})));
+      abandon_story();audio_.stop();clear_dialogue();movie_.reset();ambience_.stop();node_.reset();selected_item_.reset();interactions_.reset();
+      script_=next.get();story_=std::move(next);system_art_=std::move(system);keywords_=std::move(keywords);
+      load_script_area();
+      story_assets_=tag;renderer_.game_mode(true);topic_requested.store(false);
+      story_tick_=SDL_GetTicks();story_elapsed_=resume.visual_ms;story_seconds_=0;story_halted_=false;resume_media_=resume.media_ms;selected_item_=resume.selected;
+      renderer_.clear_image();story_base_={};if(story_->scene()){if(!story_->puzzle())node_=story_->scene();prepare_story_picture();render_story_picture(true);renderer_.set_camera(resume.camera);}
+      publish_inventory();pump_story();last_autosave_=SDL_GetTicks();
+      __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Script story session: action=%s area=%u scene=%u",loading?"load":"new",story_->area(),story_->scene());
+      if(!loading)save_story(true);else result("load",true);
+    }catch(const std::exception& e){
+      story_halted_=true;report(std::string("A03 story unavailable: ")+e.what()+". Run Set up game again with Jerusalem.ex_ and import the A03 folder and A03.AT3.");
+      if(loading)result("load",false);
+    }
+  }
   bool can_look() const {return !story_ || (!story_->busy() && !story_->puzzle() && !story_halted_);}
   void start_story(bool loading=false,bool automatic=false) {
     try {
+      if(loading){const auto path=story_path(automatic);
+        if(std::filesystem::is_regular_file(path) && std::filesystem::file_size(path)<=(4U<<20)){
+          auto bytes=jerusalem::read_file(path);static constexpr char magic[]="JSCRIPT1";
+          if(bytes.size()>=8 && std::equal(bytes.begin(),bytes.begin()+8,magic)){begin_script(&bytes,true);return;}
+        }
+      }
       auto prepared=prepare_navigation();const auto bytes=jerusalem::read_file(data_root()/"a01-stage.tsv");
       auto setup=jerusalem::parse_stage(std::string(bytes.begin(),bytes.end()));
       // A02 continues after A01 only when its archive was imported; otherwise A01 ends at its boundary.
@@ -784,6 +866,8 @@ class InspectionScene {
       publish_inventory();pump_story();last_autosave_=SDL_GetTicks();result(loading?"load":"new",true);
       __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Story session: action=%s scene=%u media_ms=%llu",loading?"load":"new",story_->scene(),static_cast<unsigned long long>(resume.media_ms));
       if(!loading)save_story(true);
+      // A save made at the end of A02 continues into A03 once the program copy exists.
+      else if(story_->area()==2 && story_->finished() && story_->boundary() && script_program_available())begin_script(nullptr,false);
     }catch(const std::exception& e){
       const std::string reason=e.what();std::string recovery;
       if(reason.find(".tsv")!=std::string::npos || reason.find("refresh A01 connections")!=std::string::npos)
@@ -834,7 +918,7 @@ class InspectionScene {
         if(target->object==10010 && !selected && story_->local_item()) {selected_item_=10010;report("World object selected. Tap the character hotspot to use it.");return;}
         const bool done=!selected && !story_->puzzle() && std::any_of(navigation_->items.begin(),navigation_->items.end(),[&](const jerusalem::Collectible& i){return i.id==target->object;})
           ?story_->pickup(target->object):story_->activate(target->object,target->event,selected);
-        if(done){if((target->object==10014 || target->object==20001) && !story_->topics().empty())topic_requested.store(true);publish_inventory();pump_story();if(!story_->busy()){prepare_story_picture();render_story_picture();}if(!story_->busy())report("A01 interaction accepted at object "+std::to_string(target->object)+".");}
+        if(done){if((script_ || target->object==10014 || target->object==20001) && !story_->topics().empty())topic_requested.store(true);publish_inventory();pump_story();if(!story_->busy()){prepare_story_picture();render_story_picture();}if(!story_->busy() && !script_)report("A01 interaction accepted at object "+std::to_string(target->object)+".");}
         else report("No supported action for that hotspot and selected item.");
         return;
       }
@@ -875,6 +959,8 @@ class InspectionScene {
   }
   void select_item(std::uint32_t id) {
     if(story_ && (story_halted_ || story_->busy())){report("Wait for the story sequence to finish.");return;}
+    if(script_){const auto bag=story_->inventory();if(std::find(bag.begin(),bag.end(),id)==bag.end()){report("Select an item currently in the inventory.");return;}
+      selected_item_=id;report("Using "+story_->item_name(id)+". Tap where to use it.");return;}
     if(!navigation_ || !interactions_ || !interactions_->owns(id)){report("Select an item currently in the navigation inventory.");return;}
     if(navigation_->targets.empty()){report("Item use needs refreshed connections: long-press A01 navigation and select the original executable.");return;}
     selected_item_=id;report("Using "+(story_?story_->item_name(id):jerusalem::inventory_name(*navigation_,id))+". Tap a USE marker; an unsupported attempt cancels the selection.");
@@ -920,6 +1006,12 @@ class InspectionScene {
     __android_log_print(ANDROID_LOG_INFO,"Jerusalem","Dialogue started: id=%u stem=%s",id,found->stem.c_str());
   }
   void combine(std::uint32_t first,std::uint32_t second) {
+    if(script_){
+      if(story_halted_ || story_->busy()){report("Wait for the story sequence to finish.");return;}
+      try{const auto result=story_->combine(first,second);publish_inventory();pump_story();
+        report(result?"Combined: "+story_->item_name(*result)+".":"Nothing happens.");}catch(const std::exception& e){story_error(e);}
+      return;
+    }
     if(!navigation_ || !interactions_ || (!node_ && !story_)) {report("Start A01 navigation before combining items.");return;}
     if(story_ && (story_halted_ || story_->busy())){report("Wait for the story sequence to finish.");return;}
     try {
