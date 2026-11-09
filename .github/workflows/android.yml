@@ -1,0 +1,160 @@
+name: Native tests and Android ARM64 APK
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2 desktop viewer dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Configure host parser tests with sanitizers
+        run: cmake -S . -B build-host -DCMAKE_BUILD_TYPE=Debug -DJERUSALEM_SANITIZE=ON -DJERUSALEM_DESKTOP_VIEWER=ON
+      - name: Build host tools and tests
+        run: cmake --build build-host --parallel 2
+      - name: Run regression and malformed-input tests
+        run: ctest --test-dir build-host --output-on-failure --output-junit host-tests.xml
+      - name: Package original-free A01 camp integration fixture
+        run: python3 tools/export_a01_smoke_fixture.py build-host/a01-smoke-model a01-smoke-fixture.zip
+      - name: Upload original-free integration fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: a01-smoke-fixture
+          path: a01-smoke-fixture.zip
+          if-no-files-found: error
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-test-report
+          path: build-host/host-tests.xml
+          if-no-files-found: warn
+      - name: Report test failure
+        if: failure()
+        run: echo '::error::Host parser build or regression tests failed. Inspect the failing step and host-test-report artifact.'
+  android:
+    needs: parsers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned SDL3 source and matching Java glue
+        run: |
+          mkdir -p third_party/SDL
+          git -C third_party/SDL init
+          git -C third_party/SDL remote add origin https://github.com/libsdl-org/SDL.git
+          git -C third_party/SDL fetch --depth 1 origin 7f3ae3d57459e59943a4ecfefc8f6277ec6bf540
+          git -C third_party/SDL checkout --detach FETCH_HEAD
+          test "$(git -C third_party/SDL rev-parse HEAD)" = 7f3ae3d57459e59943a4ecfefc8f6277ec6bf540
+          git -C third_party/SDL apply ../../patches/sdl-android-lint.patch
+          mkdir -p android/app/src/main/assets/licenses
+          cp third_party/SDL/LICENSE.txt android/app/src/main/assets/licenses/SDL.txt
+          # We use the explicitly provisioned Gradle distribution, not SDL's sample wrapper.
+          rm -f third_party/SDL/android-project/gradle/wrapper/gradle-wrapper.jar
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install pinned Android toolchain
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build native engine and debug APK; run Android lint
+        id: apk_build
+        working-directory: android
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace :app:assembleDebug :app:lintDebug 2>&1 | tee build.log
+      - name: Verify APK contains ARM64 engine and SDL libraries
+        id: apk_verify
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          apk = Path('android/app/build/outputs/apk/debug/app-debug.apk')
+          with zipfile.ZipFile(apk) as archive:
+              names = set(archive.namelist())
+              for name in ['lib/arm64-v8a/libmain.so', 'lib/arm64-v8a/libSDL3.so', 'lib/arm64-v8a/libc++_shared.so']:
+                  assert name in names, f'Missing native library: {name}'
+                  header = archive.read(name)[:20]
+                  assert header[:4] == b'\x7fELF' and header[4] == 2, f'Not ELF64: {name}'
+                  assert int.from_bytes(header[18:20], 'little') == 183, f'Not AArch64: {name}'
+              assert not any(n.lower().endswith(('.at3', '.aqc', '.ci2', '.wac', '.was', '.dll', '.exe')) for n in names)
+          PY
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Upload installable debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: jerusalem-native-arm64-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Build emulator-only APK for launch verification
+        working-directory: android
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace -PtargetAbi=x86_64 :app:assembleDebug 2>&1 | tee smoke-build.log
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/download-artifact@v4
+        with:
+          name: a01-smoke-fixture
+          path: .
+      - name: Launch native inspector in Android emulator
+        id: emulator_smoke
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: python3 tools/android_smoke.py
+      - name: Upload launch evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-smoke-evidence
+          path: smoke-output/
+          if-no-files-found: warn
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-diagnostics
+          path: |
+            android/build.log
+            android/smoke-build.log
+            android/app/build/reports/lint-results-debug.*
+          if-no-files-found: warn
+      - name: Report build result
+        if: always()
+        shell: bash
+        run: |
+          echo '### Jerusalem native Android build' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Result: ${{ job.status }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'APK compilation and lint: ${{ steps.apk_build.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'ARM64 packaging: ${{ steps.apk_verify.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Emulator validation: ${{ steps.emulator_smoke.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The APK artifact is ARM64, debug signed, and contains no original game data. Device launch and gameplay are separate validation steps.' >> "$GITHUB_STEP_SUMMARY"
+          if [ '${{ job.status }}' != success ]; then
+            echo '::error::Android workflow failed. Check the failing step: compilation, packaging and emulator validation are separate checks. See android-build-diagnostics and android-emulator-smoke-evidence.'
+          fi
