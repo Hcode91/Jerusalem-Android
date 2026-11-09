@@ -15,4 +15,6 @@ TexturePoint panorama_point(const PanoramaGeometry& geometry,const Camera& camer
                             double normalized_x,double normalized_y,unsigned width,unsigned height);
 Bitmap render_panorama(const Bitmap& source,const PanoramaGeometry& geometry,Camera camera,
                        unsigned width,unsigned height);
+// Faster approximation for interactive views: exact mapping every `step` pixels, interpolated between.
+Bitmap render_panorama_fast(const Bitmap& source,const PanoramaGeometry& geometry,Camera camera,unsigned width,unsigned height,unsigned step=8);
 }

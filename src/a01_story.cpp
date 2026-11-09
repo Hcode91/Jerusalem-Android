@@ -276,7 +276,14 @@ std::string A01Story::item_name(std::uint32_t id) const {
   for(const auto& o:setup_.objects)if(o.id==id && !o.name.empty())return o.name;
   return inventory_name(items_.graph_,id);
 }
-void A01Story::clear_speech_animation(const Dan& d){for(const auto& level:d.levels)show(level.second,level.third,false);}
+namespace {
+// Presentations without any registered image (e.g. 20002/0) draw nothing in the original; they
+// are not tracked as shown, so saves never record a presentation that cannot exist on screen.
+bool drawable(const StageSetup& setup,std::uint32_t object,std::uint32_t presentation){
+  return std::any_of(setup.layers.begin(),setup.layers.end(),[&](const StageLayer& l){return l.object==object && l.presentation==presentation;});
+}
+}
+void A01Story::clear_speech_animation(const Dan& d){for(const auto& level:d.levels)if(drawable(setup_,level.second,level.third))show(level.second,level.third,false);}
 void A01Story::speech_animation(const Dan& d,std::uint64_t time){
   if(!playing_ || playing_->kind!=StoryCue::Speech)return;
   std::optional<std::pair<std::uint32_t,std::uint32_t>> active;
@@ -284,7 +291,7 @@ void A01Story::speech_animation(const Dan& d,std::uint64_t time){
     for(const auto& level:d.levels)if(range.third && level.first==range.third){active={{level.second,level.third}};break;}
     break;
   }
-  for(const auto& level:d.levels){const std::pair<std::uint32_t,std::uint32_t> key{level.second,level.third};const bool on=active && *active==key;
+  for(const auto& level:d.levels){if(!drawable(setup_,level.second,level.third))continue;const std::pair<std::uint32_t,std::uint32_t> key{level.second,level.third};const bool on=active && *active==key;
     if(bool(shown_.count(key))!=on)show(level.second,level.third,on);
   }
 }

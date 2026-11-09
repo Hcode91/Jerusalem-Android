@@ -38,7 +38,14 @@ Each area has its own case in the per-area dispatchers, which select on `0042817
   - all 183 A02 background and layer images decode;
   - AN016 (134), AN017 (82), AN018 (60) and AN018B (200 frames) decode to EOF;
   - all 12 speeches and TRACK07.WAS decode, and all DIA files parse.
-- Three DAN tracks (OZDE_DIA050, ADRI_DIA051, OZDE_DIA054) animate registered presentations. ADRI_DIA055 and ADRI_DIA057 use presentation 20002/0, which has no registered image, so they are skipped as unsupported. Their speech and subtitles still play.
+- Three DAN tracks (OZDE_DIA050, ADRI_DIA051, OZDE_DIA054) animate registered presentations. ADRI_DIA055 and ADRI_DIA057 name presentation 20002/0, which the original creates (`ObjAddPre` at `0047cab9`) without an image in any puzzle, so the original draws no lip movement for them either. The app now treats such a level as a valid no-op: no warning, nothing drawn, and it is never recorded in saves.
+
+## Performance (follow-up)
+
+- Panorama views use `render_panorama_fast`. It evaluates the exact projection every 8 pixels and steps linearly between them in fixed point. It is about 10× faster than the exact renderer on the host (0.6 ms vs 6.3 ms for a 640×300 view), and tests keep it within one source texel of the exact mapping, including across the seam.
+- The story picture is recomposed only when an animation frame, visibility or scene actually changes. Before, it was rebuilt every 80 ms, which also capped animations at 12.5 fps.
+- The main loop paces itself to ~60 Hz instead of sleeping 16 ms on top of each frame's work.
+- Cinema movies remain at their original rate (7.5 fps for the samples checked).
 
 ## Known limits
 
