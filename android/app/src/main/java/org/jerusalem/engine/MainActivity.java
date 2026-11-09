@@ -78,7 +78,9 @@ public class MainActivity extends SDLActivity {
                 if ((flags & 64) != 0 && !menuVisible && awaitedAction == null) openMenu();
                 if ((flags & 32) != 0 && !menuVisible && awaitedAction == null) showTopics();
                 if ((flags & 16) != 0 && !completedSession && awaitedAction == null) {
-                    completedSession = true;openMenu();showText("A01 complete", "You have completed A01. The original game continues in A02, which is not implemented yet. Your completed A01 progress can be saved from the menu.");
+                    completedSession = true;openMenu();
+                    if ((flags & 128) != 0) showText("A02 complete", "You have completed A02. The original game continues in A03, which is not implemented yet. Your completed progress can be saved from the menu.");
+                    else showText("A01 complete", "You have completed A01. The original game continues in A02, which is not implemented yet. Your completed A01 progress can be saved from the menu.");
                 }
                 if (awaitedAction != null) {
                     String reply = nativeGameResult();

@@ -14,11 +14,20 @@ struct StageLayer {
 struct StageObject {std::uint32_t id;std::string name,icon;};
 struct StageSetup {std::vector<StageBackground> backgrounds;std::vector<StageAccess> access;std::vector<StageLayer> layers;std::vector<DialogueResource> dialogues;std::vector<StageObject> objects;std::vector<SceneAmbient> ambient;};
 StageSetup extract_a01_stage(Bytes executable);
+StageSetup extract_a02_stage(Bytes executable);
+// A01 followed by A02 records (stage text V3). IDs of the two areas are disjoint.
+StageSetup extract_story_stage(Bytes executable);
+// True when the model carries the A02 registrations.
+bool stage_has_a02(const StageSetup& setup);
+// The A01-only subset of a combined model, as written before A02 support.
+StageSetup a01_stage_subset(const StageSetup& setup);
 std::string write_stage(const StageSetup& setup);
 StageSetup parse_stage(const std::string& text);
 struct StoryAssetTags {std::uint64_t current,legacy;};
 // Full-area validation and bounded content fingerprinting, shared with host tests.
 StoryAssetTags a01_story_assets(const SceneGraph& graph,const StageSetup& setup,const std::filesystem::path& root);
+// Presence/parse checks for the files A02 needs. A02 files are not part of the save fingerprint.
+void validate_a02_assets(const StageSetup& setup,const std::filesystem::path& root);
 // Only path components under root/data or root; rejects ambiguous casing/symlinks.
 std::filesystem::path game_file(const std::filesystem::path& root,const std::vector<std::string>& components);
 class StageArt {
@@ -51,6 +60,9 @@ class A01Story {
   bool puzzle_=false,failed_=false,boundary_=false,bag_cleared_=false;
   bool camp_=false,cards_given_=false,jug_=false,finished_=false;
   unsigned topics_=0,bowl_=0,cards_used_=0;
+  // A02 (verified handlers 0044efd0 entry, 0044a180 use, 0044a3f0 speech end, 0044a5d0 topic).
+  unsigned area_=1,a02_topics_=0;
+  void enter_a02();
   std::uint32_t random_=1;
   void push(StoryCue::Kind kind,std::uint32_t id=0,const std::string& asset={},Camera camera={});
   void show(std::uint32_t object,std::uint32_t presentation,bool visible);
@@ -94,6 +106,7 @@ class A01Story {
   bool boundary() const {return boundary_;}
   bool finished() const {return finished_;}
   std::uint32_t scene() const {return scene_;}
+  unsigned area() const {return area_;}
   std::uint64_t remaining_ms() const {return deadline_>clock_?deadline_-clock_:0;}
 };
 }

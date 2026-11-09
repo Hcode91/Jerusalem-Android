@@ -1,6 +1,11 @@
 #include "jerusalem/stage.hpp"
 #include <algorithm>
 namespace jerusalem {
+namespace {
+// KEYWORDS.INI section #2000 offers Walls (22000) and Continue (100001); choosing
+// Continue removes it and inserts its section #100001 successor, Guards (22002).
+unsigned a02_topic_bit(std::uint32_t id){return id==22000?1U:id==22002?2U:id==100001?4U:0U;}
+}
 A01Story::A01Story(StageSetup setup,SceneGraph graph,InteractionState& items,std::uint32_t seed):setup_(std::move(setup)),graph_(std::move(graph)),items_(items),random_(seed) {
   if(!items_.history().empty() || !items_.inventory().empty())throw ParseError("story requires a fresh inventory");
   for(const auto& n:graph_.nodes)channels_[n.id].resize(n.channels,false);
@@ -70,7 +75,25 @@ bool A01Story::complete(std::uint64_t serial){
     case 11036:push(StoryCue::Puzzle,10031);push(StoryCue::Speech,11037);break;
     case 11037:show(10032,1,true);push(StoryCue::Puzzle,10028);push(StoryCue::Speech,11038);break;
     case 11038:show(10032,1,false);push(StoryCue::Puzzle,10027);push(StoryCue::Speech,11039);break;
-    case 11039:finished_=true;push(StoryCue::Boundary,2,"A01 complete. The original game continues in A02; A02 gameplay is not implemented yet.");break;
+    case 11039:finished_=true;
+      // Original 0044c1c0 requests GameCall(2,3), whose case in 0044efd0 starts A02.
+      if(stage_has_a02(setup_))enter_a02();
+      else push(StoryCue::Boundary,2,"A01 complete. The original game continues in A02; A02 gameplay is not implemented yet.");
+      break;
+    // A02 speech-finished edges (0044a3f0). 00432440(7) records an encyclopedia
+    // visit entry after 22000/22002; the encyclopedia is not implemented yet.
+    case 21000:push(StoryCue::Speech,21001);break;
+    case 21001:push(StoryCue::Puzzle,21000);push(StoryCue::Speech,21002);break;
+    case 21002:show(20004,0,true);push(StoryCue::Speech,21003);break;
+    case 21003:show(20004,0,false);push(StoryCue::Puzzle,21002);push(StoryCue::Speech,21004);break;
+    case 21004:push(StoryCue::Speech,21005);break;
+    case 21005:push(StoryCue::Puzzle,21000);push(StoryCue::Speech,21006);break;
+    case 21006:push(StoryCue::Movie,17,"A02S02_AN017");push(StoryCue::Puzzle,22004);break;
+    case 22000:push(StoryCue::Speech,22001);break;
+    case 22001:push(StoryCue::Puzzle,22004);break;
+    case 22002:push(StoryCue::Speech,22003);break;
+    case 22003:push(StoryCue::Movie,18,"A02S02_AN018");push(StoryCue::Puzzle,22003);push(StoryCue::Speech,22004);break;
+    case 22004:push(StoryCue::Movie,19,"A02S02_AN018B");push(StoryCue::Boundary,3,"A02 complete. The original game continues in A03; A03 gameplay is not implemented yet.");break;
     case 11040:show(10032,3,false);push(StoryCue::Movie,14,"A01S01_AN014");push(StoryCue::Puzzle,10037);break;
     default:break;
   }
@@ -118,6 +141,8 @@ bool A01Story::activate(std::uint32_t object,std::uint32_t event,std::optional<s
   if(busy() || failed_ || boundary_)return false;
   const auto active=hotspots();
   if(std::none_of(active.begin(),active.end(),[&](const StageAccess& h){return h.object==object && h.event==event;}))return false;
+  // A02 use handler 0044a180: only the bare character 20001 reacts, by opening topics.
+  if(area_==2)return object==20001 && event==0 && !item && !topics().empty();
   if(item && (*item==10010 ? local_item()!=10010 : !items_.owns(*item)))return false;
   if(camp_) {
     if(object==10014 && event==0 && !item)return !topics().empty();
@@ -204,17 +229,32 @@ std::optional<std::uint32_t> A01Story::local_item() const {
   for(std::size_t i=0;i<setup_.access.size();++i)if(setup_.access[i].object==10010 && enabled_[i])return 10010;
   return {};
 }
+void A01Story::enter_a02(){
+  // 0044efd0 area-2 entry: SetSpace(2), stop timers, BagRemAll, show the crowd and both
+  // listeners, AN016, puzzle 21002 and the first speech.
+  area_=2;deadline_=0;items_.inventory_.clear();
+  all(20000,true);all(20001,true);all(20003,true);
+  push(StoryCue::Movie,16,"A02S02_AN016");push(StoryCue::Puzzle,21002);push(StoryCue::Speech,21000);
+}
 void A01Story::bag_add(std::uint32_t id){if(!items_.owns(id))items_.inventory_.push_back(id);}
 void A01Story::bag_remove(std::uint32_t id){auto& bag=items_.inventory_;bag.erase(std::remove(bag.begin(),bag.end(),id),bag.end());}
 unsigned A01Story::random_choice(unsigned n){random_=random_*214013U+2531011U;return ((random_>>16)&32767U)*n/32768U;}
 std::optional<std::uint32_t> A01Story::combine(std::uint32_t first,std::uint32_t second){
-  if(busy() || failed_ || boundary_)return {};
+  if(busy() || failed_ || boundary_ || area_==2)return {};  // A02 combine handler is the shared no-op 0043df80
   if(!camp_)return items_.combine(first,second);
   if(bowl_!=1 || !jug_ || !items_.owns(first) || !items_.owns(second) ||
      !((first==10018 && second==10020)||(first==10020 && second==10018)))return {};
   bag_remove(10018);bag_add(10019);bowl_=2;return 10019;
 }
 std::vector<std::uint32_t> A01Story::topics() const {
+  if(area_==2){
+    if(busy() || failed_ || boundary_ || scene_!=22004)return {};
+    std::vector<std::uint32_t> result;
+    if(!(a02_topics_&1U))result.push_back(22000);
+    if(!(a02_topics_&4U))result.push_back(100001);
+    else if(!(a02_topics_&2U))result.push_back(22002);
+    return result;
+  }
   if(!camp_ || busy() || failed_ || boundary_ || scene_!=10023)return {};
   if(topics_==0)return {11018};
   if(topics_==1)return {11022};
@@ -222,6 +262,12 @@ std::vector<std::uint32_t> A01Story::topics() const {
 }
 bool A01Story::choose_topic(std::uint32_t id){
   const auto available=topics();if(std::find(available.begin(),available.end(),id)==available.end())return false;
+  if(area_==2){
+    // Topic handler 0044a5d0 moves to the speaker's puzzle; the engine then plays the topic speech.
+    a02_topics_|=a02_topic_bit(id);
+    if(id==100001)return true;  // no speech or handler case; only the topic list changes
+    push(StoryCue::Puzzle,id==22000?22001:22002);push(StoryCue::Speech,id);return true;
+  }
   topics_|=id==11018?1U:2U;
   if(id==11018)show(10032,0,true);
   push(StoryCue::Puzzle,10027);push(StoryCue::Speech,id);return true;

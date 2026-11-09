@@ -56,8 +56,25 @@ StageSetup setup(){
  for(unsigned id=11018;id<=11042;++id)s.dialogues.push_back({id,"A01","SYNTH_"+std::to_string(id)});
  return parse_stage(write_stage(s));
 }
+// A02 records as extracted from the supported executable (0047c5f0), with synthetic names.
+StageSetup with_a02(const StageSetup& original){
+ auto s=original;
+ for(auto id:{22000U,22001U,22002U,22003U,22004U,21000U,21002U})s.backgrounds.push_back({id,"SYNTH.BMP",0,16});
+ s.access.push_back({20001,22004,0,false,true,249,219,329,480,61,0});
+ s.layers.push_back({20000,0,22001,false,true,"SYNTH",0,15,16,1100,252,251,15});
+ s.layers.push_back({20001,0,21002,false,true,"SYNTH",0,15,16,1100,416,321,15});
+ s.layers.push_back({20003,0,21002,false,true,"SYNTH",0,15,16,1100,493,317,12.5});
+ s.layers.push_back({20004,0,21000,false,false,"SYNTH.BMP",0,1,0,100,160,149,0});
+ for(unsigned id=21000;id<=21006;++id)s.dialogues.push_back({id,"A02","SYNTH_"+std::to_string(id)});
+ for(unsigned id=22000;id<=22004;++id)s.dialogues.push_back({id,"A02","SYNTH_"+std::to_string(id)});
+ for(auto id:{20000U,20001U,20002U,20003U,20004U,20005U})s.objects.push_back({id,"",""});
+ for(auto puzzle:{22001U,22002U,22003U,22004U,21000U,21002U})s.ambient.push_back({puzzle,20000,90,"SYNTH_CROWD",100});
+ const auto combined=parse_stage(write_stage(s));
+ check(stage_has_a02(combined) && write_stage(a01_stage_subset(combined))==write_stage(original));
+ return combined;
+}
 std::vector<StoryCue> drain(A01Story& story){std::vector<StoryCue> cues;unsigned budget=100;while(auto cue=story.next()){check(budget-->0);cues.push_back(*cue);if(inspect_save)inspect_save(story);if(inspect_picture && (cue->kind==StoryCue::Node || cue->kind==StoryCue::Puzzle))inspect_picture(story);if(cue->kind==StoryCue::Movie || cue->kind==StoryCue::Speech){check(!story.complete(cue->serial+1));check(story.complete(cue->serial));check(!story.complete(cue->serial));}}return cues;}
-void route(const SceneGraph& g,const StageSetup& s,bool sling,std::uint32_t attack=10005,bool no_ammo=false){
+void route(const SceneGraph& g,const StageSetup& s,bool sling,std::uint32_t attack=10005,bool no_ammo=false,bool a02=false){
  InteractionState inventory(g);A01Story story(s,g,inventory);
  inspect_save=[&](const A01Story& source){
    StoryResume resume{{36.5,-12,65},source.playing()?123U:0U,3200,{}};
@@ -89,7 +106,7 @@ void route(const SceneGraph& g,const StageSetup& s,bool sling,std::uint32_t atta
  if(attack!=10005){check(story.failed());check(finale.size()==2 && finale[0].asset==(attack==10012?"A01S01_AN007A":"A01S01_AN007B") && finale[1].id==10044);inspect_save={};return;}
  check(finale.front().asset=="A01S01_AN007C");check(std::any_of(finale.begin(),finale.end(),[](const StoryCue& c){return c.asset=="A01S01_AN009";}));
  check(!story.boundary() && story.scene()==10023 && !story.failed());check(inventory.inventory().empty());check(!story.activate(10005,0,10017));
- if(const auto directory=std::getenv("JERUSALEM_EXPORT_CAMP");directory && s.backgrounds.front().image=="SYNTH.BMP"){
+ if(const auto directory=std::getenv("JERUSALEM_EXPORT_CAMP");directory && !a02 && s.backgrounds.front().image=="SYNTH.BMP"){
    const auto root=std::filesystem::path(directory);std::filesystem::create_directories(root);
    std::ofstream(root/"a01-stage.tsv")<<write_stage(s);std::ofstream(root/"a01-navigation.tsv")<<write_navigation(g);
    const auto state=story.save({{0,0,85},0,0,{}},77);std::ofstream file(root/"camp.jrs",std::ios::binary);file.write(reinterpret_cast<const char*>(state.data()),static_cast<std::streamsize>(state.size()));check(bool(file));
@@ -120,9 +137,27 @@ void route(const SceneGraph& g,const StageSetup& s,bool sling,std::uint32_t atta
    check(story.activate(target,0,target));drain(story);check(!inventory.owns(target));
  }
  check(story.scene()==10023);check(!story.activate(10014,0));check(story.activate(10021,2,10019));const auto ending=drain(story);
- check(story.finished() && story.boundary() && !story.failed());check(ending.back().kind==StoryCue::Boundary && ending.back().id==2);
+ if(!a02){check(story.finished() && story.boundary() && !story.failed());check(ending.back().kind==StoryCue::Boundary && ending.back().id==2);}
+ else{
+   // A02 entry (0044efd0) and the speech chain (0044a3f0) up to the topic stop after AN017.
+   check(story.finished() && !story.boundary() && story.area()==2 && inventory.inventory().empty());
+   std::vector<std::string> movies;std::vector<std::uint32_t> speeches;
+   for(const auto& c:ending){if(c.kind==StoryCue::Movie && c.asset.rfind("A02",0)==0)movies.push_back(c.asset);if(c.kind==StoryCue::Speech && c.id>=21000)speeches.push_back(c.id);}
+   check((movies==std::vector<std::string>{"A02S02_AN016","A02S02_AN017"}));
+   check((speeches==std::vector<std::uint32_t>{21000,21001,21002,21003,21004,21005,21006}));
+   check(story.puzzle() && story.scene()==22004 && !story.busy());
+   check((story.topics()==std::vector<std::uint32_t>{22000,100001}));
+   check(!story.activate(20001,0,10019) && story.activate(20001,0));check(!story.combine(10018,10020));check(!story.choose_topic(22002));
+   check(story.choose_topic(22000));const auto first=drain(story);
+   check(first.front().kind==StoryCue::Puzzle && first.front().id==22001 && story.scene()==22004 && !story.boundary());
+   check((story.topics()==std::vector<std::uint32_t>{100001}));check(!story.choose_topic(22000));
+   check(story.choose_topic(100001) && !story.busy());check((story.topics()==std::vector<std::uint32_t>{22002}));
+   check(story.choose_topic(22002));const auto last=drain(story);
+   check(story.boundary() && story.finished() && last.back().kind==StoryCue::Boundary && last.back().id==3);
+   check(std::any_of(last.begin(),last.end(),[](const StoryCue& c){return c.asset=="A02S02_AN018B";}) && story.topics().empty());
+ }
  check(std::any_of(ending.begin(),ending.end(),[](const StoryCue& c){return c.asset=="A01S01_AN013";}));
- check(inventory.inventory()==std::vector<std::uint32_t>{10020});inspect_save={};
+ check(inventory.inventory()==(a02?std::vector<std::uint32_t>{}:std::vector<std::uint32_t>{10020}));inspect_save={};
 }
 }
 int main(int argc,char** argv){try{
@@ -136,7 +171,7 @@ int main(int argc,char** argv){try{
    InteractionState old_items(old_graph);A01Story migrated(old_setup,old_graph,old_items);
    const auto resumed=migrated.load(Bytes(bytes),99,77);
    check(!migrated.boundary() && migrated.scene()==10023 && migrated.topics()==std::vector<std::uint32_t>{11018});
-   const auto upgraded=migrated.save(resumed,99);check(Bytes(upgraded).u32(8)==2);
+   const auto upgraded=migrated.save(resumed,99);check(Bytes(upgraded).u32(8)==3);
    reject([&]{migrated.load(Bytes(bytes),99,78);});
    InteractionState copy_items(old_graph);A01Story copy(old_setup,old_graph,copy_items);copy.load(Bytes(upgraded),99);
    check(copy.save(resumed,99)==upgraded);
@@ -166,7 +201,7 @@ int main(int argc,char** argv){try{
  reject([&]{game_file(root,{"..","SOUND.WAV"});});reject([&]{game_file(root,{"A01","MISSING"});});
  {std::ofstream f(root/"data/a01/sound.wav");f<<"duplicate";}reject([&]{game_file(root,{"A01","sound.wav"});});std::filesystem::remove(root/"data/a01/sound.wav");
  std::filesystem::create_symlink(root/"data/a01/SOUND.WAV",root/"data/a01/LINK.WAV");reject([&]{game_file(root,{"A01","LINK.WAV"});});std::filesystem::remove_all(root);
- route(g,s,true);route(g,s,false);route(g,s,true,10012);route(g,s,true,10013);route(g,s,false,10005,true);
+ route(g,s,true);route(g,s,false);route(g,with_a02(s),true,10005,false,true);route(g,s,true,10012);route(g,s,true,10013);route(g,s,false,10005,true);
  InteractionState saved_items(g);A01Story saved_story(s,g,saved_items);saved_story.start();auto current=saved_story.next();check(current && current->kind==StoryCue::Movie);
  const StoryResume movie_resume{{0,0,85},1000,5000,{}};const auto state=saved_story.save(movie_resume,19);
  for(std::size_t n=0;n<state.size();++n){auto bad=state;bad[n]^=1;reject([&]{saved_story.load(Bytes(bad),19);});check(saved_story.save(movie_resume,19)==state);}
