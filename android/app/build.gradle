@@ -1,0 +1,42 @@
+plugins { id 'com.android.application' }
+
+// Every APK is built by Actions. Host parser builds do not use this project.
+tasks.register('requireActions') {
+    doLast {
+        if (System.getenv('GITHUB_ACTIONS') != 'true') {
+            throw new GradleException('APK builds must run in GitHub Actions. Use the Android workflow.')
+        }
+    }
+}
+
+android {
+    namespace 'org.jerusalem.engine'
+    compileSdk 35
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        applicationId 'org.jerusalem.engine'
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        // The published artifact uses ARM64. CI also builds an x86_64 APK solely for launch testing.
+        ndk { abiFilters(providers.gradleProperty('targetAbi').getOrElse('arm64-v8a')) }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared', '-DBUILD_TESTING=OFF'
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake { path '../../CMakeLists.txt'; version '3.22.1' }
+    }
+    sourceSets.main.java.srcDir '../../third_party/SDL/android-project/app/src/main/java'
+    buildTypes { debug { debuggable true }; release { minifyEnabled false } }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError true }
+}
+tasks.named('preBuild').configure { dependsOn 'requireActions' }

@@ -1,9 +1,0 @@
-# Pinned upstream inputs (sourced by scripts/prepare.sh and CI).
-# Winlator's public source stops at 7.1; this commit is the last source update
-# (tagged v10.1.0, but app/ is still the 7.1 code). imagefs.txz must come from
-# the matching 7.1 release APK.
-WINLATOR_REPO=https://github.com/brunodev85/winlator
-WINLATOR_COMMIT=96504ff4ef34a9cbad9d03d70d1f420fcb8338ec
-WINLATOR_RELEASE_TAG=v7.1.0
-WINLATOR_APK_NAME=Winlator_7.1.apk
-OPENXR_TAG=release-1.0.34
